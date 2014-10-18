@@ -1,12 +1,14 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
-/*
- * The Marionette object, passed to the script context.
- */
 
-this.Marionette = function Marionette(scope, window, context, logObj, timeout,
-                                      heartbeatCallback, testName) {
+"use strict";
+
+const EXPORTED_SYMBOLS = ["Marionette"];
+
+/** The Marionette object, passed to the script context. */
+function Marionette(scope, window, context, logObj, timeout,
+                    heartbeatCallback, testName) {
   this.scope = scope;
   this.window = window;
   this.tests = [];
@@ -26,8 +28,7 @@ Marionette.prototype = {
             'runEmulatorCmd', 'runEmulatorShell', 'TEST_PASS', 'TEST_KNOWN_FAIL',
             'TEST_UNEXPECTED_FAIL', 'TEST_UNEXPECTED_PASS'],
 
-  addTest: function Marionette__addTest(condition, name, passString, failString, diag, state) {
-
+  addTest: function(condition, name, passString, failString, diag, state) {
     let test = {'result': !!condition, 'name': name, 'diag': diag, 'state': state};
     this.logResult(test,
                    typeof(passString) == "undefined" ? this.TEST_PASS : passString,
@@ -35,13 +36,13 @@ Marionette.prototype = {
     this.tests.push(test);
   },
 
-  ok: function Marionette__ok(condition, name, passString, failString) {
+  ok: function(condition, name, passString, failString) {
     this.heartbeatCallback();
     let diag = this.repr(condition) + " was " + !!condition + ", expected true";
     this.addTest(condition, name, passString, failString, diag);
   },
 
-  is: function Marionette__is(a, b, name, passString, failString) {
+  is: function(a, b, name, passString, failString) {
     this.heartbeatCallback();
     let pass = (a == b);
     let diag = pass ? this.repr(a) + " should equal " + this.repr(b)
@@ -49,7 +50,7 @@ Marionette.prototype = {
     this.addTest(pass, name, passString, failString, diag);
   },
 
-  isnot: function Marionette__isnot (a, b, name, passString, failString) {
+  isnot: function(a, b, name, passString, failString) {
     this.heartbeatCallback();
     let pass = (a != b);
     let diag = pass ? this.repr(a) + " should not equal " + this.repr(b)
@@ -57,7 +58,7 @@ Marionette.prototype = {
     this.addTest(pass, name, passString, failString, diag);
   },
 
-  todo: function Marionette__todo(condition, name, passString, failString) {
+  todo: function(condition, name, passString, failString) {
     this.heartbeatCallback();
     let diag = this.repr(condition) + " was expected false";
     this.addTest(!condition,
@@ -68,7 +69,7 @@ Marionette.prototype = {
                  "todo");
   },
 
-  log: function Marionette__log(msg, level) {
+  log: function(msg, level) {
     this.heartbeatCallback();
     dump("MARIONETTE LOG: " + (level ? level : "INFO") + ": " + msg + "\n");
     if (this.logObj != null) {
@@ -76,14 +77,14 @@ Marionette.prototype = {
     }
   },
 
-  getLogs: function Marionette__getLogs() {
+  getLogs: function() {
     this.heartbeatCallback();
     if (this.logObj != null) {
       this.logObj.getLogs();
     }
   },
 
-  generate_results: function Marionette__generate_results() {
+  generate_results: function() {
     this.heartbeatCallback();
     let passed = 0;
     let failures = [];
@@ -110,16 +111,18 @@ Marionette.prototype = {
     }
     // Reset state in case this object is reused for more tests.
     this.tests = [];
-    return {"passed": passed, "failures": failures, "expectedFailures": expectedFailures,
+    return {"passed": passed,
+            "failures": failures,
+            "expectedFailures": expectedFailures,
             "unexpectedSuccesses": unexpectedSuccesses};
   },
 
-  logToFile: function Marionette__logToFile(file) {
+  logToFile: function(file) {
     this.heartbeatCallback();
     //TODO
   },
 
-  logResult: function Marionette__logResult(test, passString, failString) {
+  logResult: function(test, passString, failString) {
     this.heartbeatCallback();
     //TODO: dump to file
     let resultString = test.result ? passString : failString;
@@ -185,15 +188,13 @@ Marionette.prototype = {
       this.window.setTimeout(this.waitFor.bind(this), 100, callback, test, deadline);
   },
 
-  runEmulatorCmd: function runEmulatorCmd(cmd, callback) {
+  runEmulatorCmd: function(cmd, callback) {
     this.heartbeatCallback();
     this.scope.runEmulatorCmd(cmd, callback);
   },
 
-  runEmulatorShell: function runEmulatorShell(args, callback) {
+  runEmulatorShell: function(args, callback) {
     this.heartbeatCallback();
     this.scope.runEmulatorShell(args, callback);
   },
-
 };
-

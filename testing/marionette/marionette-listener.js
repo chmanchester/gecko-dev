@@ -1,50 +1,45 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+"use strict";
 
-let uuidGen = Cc["@mozilla.org/uuid-generator;1"]
-                .getService(Ci.nsIUUIDGenerator);
+const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
-let loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
-               .getService(Ci.mozIJSSubScriptLoader);
+const uuidGen = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator);
+const loader = Cc["@mozilla.org/moz/jssubscript-loader;1"].getService(Ci.mozIJSSubScriptLoader);
 
-loader.loadSubScript("chrome://marionette/content/marionette-simpletest.js");
-loader.loadSubScript("chrome://marionette/content/marionette-common.js");
-Cu.import("chrome://marionette/content/marionette-elements.js");
 Cu.import("resource://gre/modules/FileUtils.jsm");
+Cu.import("resource://gre/modules/Log.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-let utils = {};
-utils.window = content;
-// Load Event/ChromeUtils for use with JS scripts:
-loader.loadSubScript("chrome://marionette/content/EventUtils.js", utils);
-loader.loadSubScript("chrome://marionette/content/ChromeUtils.js", utils);
-loader.loadSubScript("chrome://marionette/content/atoms.js", utils);
-loader.loadSubScript("chrome://marionette/content/marionette-sendkeys.js", utils);
+
+Cu.import("chrome://marionette/content/atoms.js");
+Cu.import("chrome://marionette/content/marionette-common.js");
+Cu.import("chrome://marionette/content/marionette-elements.js");
+Cu.import("chrome://marionette/content/marionette-simpletest.js");
 
 loader.loadSubScript("chrome://specialpowers/content/specialpowersAPI.js");
 loader.loadSubScript("chrome://specialpowers/content/specialpowers.js");
 
-let marionetteLogObj = new MarionetteLogObj();
+// Preserve this import order:
+let events = {};
+loader.loadSubScript("chrome://marionette/content/EventUtils.js", events);
+loader.loadSubScript("chrome://marionette/content/ChromeUtils.js", events);
+loader.loadSubScript("chrome://marionette/content/marionette-sendkeys.js", events);
 
+let logger = Log.repository.getLogger("Marionette");
+let marionetteLogObj = new MarionetteLogObj();
+var curWin = content;
 let isB2G = false;
 
 let marionetteTestName;
 let winUtil = content.QueryInterface(Ci.nsIInterfaceRequestor)
                      .getInterface(Ci.nsIDOMWindowUtils);
-let listenerId = null; //unique ID of this listener
-let curFrame = content;
 let previousFrame = null;
 let elementManager = new ElementManager([]);
 let importedScripts = null;
 let inputSource = null;
-
-// The sandbox we execute test scripts in. Gets lazily created in
-// createExecuteContentSandbox().
-let sandbox;
 
 // the unload handler
 let onunload;
@@ -73,11 +68,7 @@ let multiLast = {};
 let lastCoordinates = null;
 let isTap = false;
 let scrolling = false;
-// whether to send mouse event
-let mouseEventsOnly = false;
 
-Cu.import("resource://gre/modules/Log.jsm");
-let logger = Log.repository.getLogger("Marionette");
 logger.info("loaded marionette-listener.js");
 let modalHandler = function() {
   // This gets called on the system app only since it receives the mozbrowserprompt event
@@ -90,12 +81,48 @@ let modalHandler = function() {
   sandbox = null;
 };
 
+function MarionetteListener(listenerId) {
+	this.listenerId = listenerId || null;
+	this.curFrame = content;
+
+	// The sandbox we execute test scripts in. Gets lazily created in
+	// createExecuteContentSandbox.
+	this.sandbox;
+
+	// whether to send mouse event
+	let mouseEventsOnly = false;
+}
+
+MarionetteListener.prototype.start = function() {
+  this.startListeners();
+  this.register();
+};
+
+/**
+ * Puts the current session to sleep, so all listeners are removed except
+ * for the "restart" listener.  This is used to keep the content listener
+ * alive for reuse in B2G instead of reloading it each time.
+ */
+MarionetteListener.prototype.stop = function() {
+  this.deleteSession();
+  this.addMessageListener("Marionette:restart", this.restart);
+};
+
+/** Restarts all our listeners after this listener was put to sleep. */
+MarionetteListener.prototype.restart = function() {
+  removeMessageListener("Marionette:restart", restart);
+  if (isB2G) {
+    readyStateTimer.initWithCallback(waitForReady, 100, Ci.nsITimer.TYPE_ONE_SHOT);
+  }
+  this.start();
+};
+
 /**
  * Called when listener is first started up.
  * The listener sends its unique window ID and its current URI to the actor.
  * If the actor returns an ID, we start the listeners. Otherwise, nothing happens.
  */
-function registerSelf() {
+MarionetteListener.prototype.register = function() {
   let msg = {value: winUtil.outerWindowID, href: content.location.href};
   // register will have the ID and a boolean describing if this is the main process or not
   let register = sendSyncMessage("Marionette:register", msg);
@@ -106,107 +133,85 @@ function registerSelf() {
     if (register[0][1] == true) {
       addMessageListener("MarionetteMainListener:emitTouchEvent", emitTouchEventForIFrame);
     }
-    importedScripts = FileUtils.getDir('TmpD', [], false);
-    importedScripts.append('marionetteContentScripts');
-    startListeners();
+    importedScripts = FileUtils.getDir("TmpD", [], false);
+    importedScripts.append("marionetteContentScripts");
   }
-}
+};
 
-function emitTouchEventForIFrame(message) {
-  message = message.json;
-  let frames = curFrame.document.getElementsByTagName("iframe");
-  let iframe = frames[message.index];
-  let identifier = nextTouchId;
+MarionetteListener.prototype.emitTouchEventForIFrame = function(msg) {
+  msg = msg.json;
+  let frames = this.curFrame.document.getElementsByTagName("iframe");
+  let iframe = frames[msg.index];
+  let id = nextTouchId;
   let tabParent = iframe.QueryInterface(Components.interfaces.nsIFrameLoaderOwner).frameLoader.tabParent;
-  tabParent.injectTouchEvent(message.type, [identifier],
-                             [message.clientX], [message.clientY],
-                             [message.radiusX], [message.radiusY],
-                             [message.rotationAngle], [message.force],
+  tabParent.injectTouchEvent(msg.type, [id],
+                             [msg.clientX], [msg.clientY],
+                             [msg.radiusX], [msg.radiusY],
+                             [msg.rotationAngle], [msg.force],
                              1, 0);
-}
+};
 
-/**
- * Add a message listener that's tied to our listenerId.
- */
-function addMessageListenerId(messageName, handler) {
-  addMessageListener(messageName + listenerId, handler);
-}
+MarionetteListener.prototype.addMessageListenerId = function(name, handler) {
+  addMessageListener(name + this.listenerId, this.dispatch(handler));
+};
 
-/**
- * Remove a message listener that's tied to our listenerId.
- */
-function removeMessageListenerId(messageName, handler) {
-  removeMessageListener(messageName + listenerId, handler);
-}
+MarionetteListener.prototype.removeMessageListenerId = function(name, handler) {
+  // TODO(ato): Why must the function pointer be passed in again?
+  // Possibly explanation: Multiple callbacks can be attached.
+  removeMessageListener(name + this.listenerId, this.dispatch(handler));
+};
 
-/**
- * Start all message listeners
- */
-function startListeners() {
-  addMessageListenerId("Marionette:newSession", newSession);
-  addMessageListenerId("Marionette:executeScript", executeScript);
-  addMessageListenerId("Marionette:executeAsyncScript", executeAsyncScript);
-  addMessageListenerId("Marionette:executeJSScript", executeJSScript);
-  addMessageListenerId("Marionette:singleTap", singleTap);
-  addMessageListenerId("Marionette:actionChain", actionChain);
-  addMessageListenerId("Marionette:multiAction", multiAction);
-  addMessageListenerId("Marionette:get", get);
-  addMessageListenerId("Marionette:getCurrentUrl", getCurrentUrl);
-  addMessageListenerId("Marionette:getTitle", getTitle);
-  addMessageListenerId("Marionette:getPageSource", getPageSource);
-  addMessageListenerId("Marionette:goBack", goBack);
-  addMessageListenerId("Marionette:goForward", goForward);
-  addMessageListenerId("Marionette:refresh", refresh);
-  addMessageListenerId("Marionette:findElementContent", findElementContent);
-  addMessageListenerId("Marionette:findElementsContent", findElementsContent);
-  addMessageListenerId("Marionette:getActiveElement", getActiveElement);
-  addMessageListenerId("Marionette:clickElement", clickElement);
-  addMessageListenerId("Marionette:getElementAttribute", getElementAttribute);
-  addMessageListenerId("Marionette:getElementText", getElementText);
-  addMessageListenerId("Marionette:getElementTagName", getElementTagName);
-  addMessageListenerId("Marionette:isElementDisplayed", isElementDisplayed);
-  addMessageListenerId("Marionette:getElementValueOfCssProperty", getElementValueOfCssProperty);
-  addMessageListenerId("Marionette:submitElement", submitElement);
-  addMessageListenerId("Marionette:getElementSize", getElementSize);
-  addMessageListenerId("Marionette:getElementRect", getElementRect);
-  addMessageListenerId("Marionette:isElementEnabled", isElementEnabled);
-  addMessageListenerId("Marionette:isElementSelected", isElementSelected);
-  addMessageListenerId("Marionette:sendKeysToElement", sendKeysToElement);
-  addMessageListenerId("Marionette:getElementLocation", getElementLocation); //deprecated
-  addMessageListenerId("Marionette:clearElement", clearElement);
-  addMessageListenerId("Marionette:switchToFrame", switchToFrame);
-  addMessageListenerId("Marionette:deleteSession", deleteSession);
-  addMessageListenerId("Marionette:sleepSession", sleepSession);
-  addMessageListenerId("Marionette:emulatorCmdResult", emulatorCmdResult);
-  addMessageListenerId("Marionette:importScript", importScript);
-  addMessageListenerId("Marionette:getAppCacheStatus", getAppCacheStatus);
-  addMessageListenerId("Marionette:setTestName", setTestName);
-  addMessageListenerId("Marionette:takeScreenshot", takeScreenshot);
-  addMessageListenerId("Marionette:addCookie", addCookie);
-  addMessageListenerId("Marionette:getCookies", getCookies);
-  addMessageListenerId("Marionette:deleteAllCookies", deleteAllCookies);
-  addMessageListenerId("Marionette:deleteCookie", deleteCookie);
-}
-
-/**
- * Used during newSession and restart, called to set up the modal dialog listener in b2g
- */
-function waitForReady() {
-  if (content.document.readyState == 'complete') {
-    readyStateTimer.cancel();
-    content.addEventListener("mozbrowsershowmodalprompt", modalHandler, false);
-    content.addEventListener("unload", waitForReady, false);
-  }
-  else {
-    readyStateTimer.initWithCallback(waitForReady, 100, Ci.nsITimer.TYPE_ONE_SHOT);
-  }
-}
+MarionetteListener.prototype.startListeners = function() {
+  addMessageListenerId("Marionette:newSession", this.newSession);
+  addMessageListenerId("Marionette:executeScript", this.executeScript);
+  addMessageListenerId("Marionette:executeAsyncScript", this.executeAsyncScript);
+  addMessageListenerId("Marionette:executeJSScript", this.executeJSScript);
+  addMessageListenerId("Marionette:singleTap", this.singleTap);
+  addMessageListenerId("Marionette:actionChain", this.actionChain);
+  addMessageListenerId("Marionette:multiAction", this.multiAction);
+  addMessageListenerId("Marionette:get", this.get);
+  addMessageListenerId("Marionette:getCurrentUrl", this.getCurrentUrl);
+  addMessageListenerId("Marionette:getTitle", this.getTitle);
+  addMessageListenerId("Marionette:getPageSource", this.getPageSource);
+  addMessageListenerId("Marionette:goBack", this.goBack);
+  addMessageListenerId("Marionette:goForward", this.goForward);
+  addMessageListenerId("Marionette:refresh", this.refresh);
+  addMessageListenerId("Marionette:findElementContent", this.findElementContent);
+  addMessageListenerId("Marionette:findElementsContent", this.findElementsContent);
+  addMessageListenerId("Marionette:getActiveElement", this.getActiveElement);
+  addMessageListenerId("Marionette:clickElement", this.clickElement);
+  addMessageListenerId("Marionette:getElementAttribute", this.getElementAttribute);
+  addMessageListenerId("Marionette:getElementText", this.getElementText);
+  addMessageListenerId("Marionette:getElementTagName", this.getElementTagName);
+  addMessageListenerId("Marionette:isElementDisplayed", this.isElementDisplayed);
+  addMessageListenerId("Marionette:getElementValueOfCssProperty", this.getElementValueOfCssProperty);
+  addMessageListenerId("Marionette:submitElement", this.submitElement);
+  addMessageListenerId("Marionette:getElementSize", this.getElementSize);
+  addMessageListenerId("Marionette:getElementRect", this.getElementRect);
+  addMessageListenerId("Marionette:isElementEnabled", this.isElementEnabled);
+  addMessageListenerId("Marionette:isElementSelected", this.isElementSelected);
+  addMessageListenerId("Marionette:sendKeysToElement", this.sendKeysToElement);
+  addMessageListenerId("Marionette:getElementLocation", this.getElementLocation); // deprecated
+  addMessageListenerId("Marionette:clearElement", this.clearElement);
+  addMessageListenerId("Marionette:switchToFrame", this.switchToFrame);
+  addMessageListenerId("Marionette:deleteSession", this.deleteSession);
+  addMessageListenerId("Marionette:sleepSession", this.sleepSession);
+  addMessageListenerId("Marionette:emulatorCmdResult", this.emulatorCmdResult);
+  addMessageListenerId("Marionette:importScript", this.importScript);
+  addMessageListenerId("Marionette:getAppCacheStatus", this.getAppCacheStatus);
+  addMessageListenerId("Marionette:setTestName", this.setTestName);
+  addMessageListenerId("Marionette:takeScreenshot", this.takeScreenshot);
+  addMessageListenerId("Marionette:addCookie", this.addCookie);
+  addMessageListenerId("Marionette:getCookies", this.getCookies);
+  addMessageListenerId("Marionette:deleteAllCookies", this.deleteAllCookies);
+  addMessageListenerId("Marionette:deleteCookie", this.deleteCookie);
+};
 
 /**
  * Called when we start a new session. It registers the
  * current environment, and resets all values
  */
-function newSession(msg) {
+MarionetteListener.prototype.newSession = function(msg) {
   isB2G = msg.json.B2G;
   resetValues();
   if (isB2G) {
@@ -218,32 +223,8 @@ function newSession(msg) {
     // in order to prevent creating touch event for these fake mouse events.
     inputSource = Ci.nsIDOMMouseEvent.MOZ_SOURCE_TOUCH;
   }
-}
+};
 
-/**
- * Puts the current session to sleep, so all listeners are removed except
- * for the 'restart' listener. This is used to keep the content listener
- * alive for reuse in B2G instead of reloading it each time.
- */
-function sleepSession(msg) {
-  deleteSession();
-  addMessageListener("Marionette:restart", restart);
-}
-
-/**
- * Restarts all our listeners after this listener was put to sleep
- */
-function restart(msg) {
-  removeMessageListener("Marionette:restart", restart);
-  if (isB2G) {
-    readyStateTimer.initWithCallback(waitForReady, 100, Ci.nsITimer.TYPE_ONE_SHOT);
-  }
-  registerSelf();
-}
-
-/**
- * Removes all listeners
- */
 function deleteSession(msg) {
   removeMessageListenerId("Marionette:newSession", newSession);
   removeMessageListenerId("Marionette:executeScript", executeScript);
@@ -297,68 +278,55 @@ function deleteSession(msg) {
   touchIds = {};
 }
 
-/*
- * Helper methods
- */
+MarionetteListener.prototype.resetValues = function() {
+  this.sandbox = null;
+  this.curFrame = content;
+  this.mouseEventsOnly = false;
+}
 
 /**
- * Generic method to send a message to the server
+ * Used during newSession and restart, called to set up the modal dialog listener in b2g
  */
-function sendToServer(msg, value, command_id) {
-  if (command_id) {
-    value.command_id = command_id;
+MarionetteListener.prototype.waitForReady = function() {
+  if (content.document.readyState === "complete") {
+    readyStateTimer.cancel();
+    content.addEventListener("mozbrowsershowmodalprompt", modalHandler, false);
+    content.addEventListener("unload", waitForReady, false);
+  } else {
+    readyStateTimer.initWithCallback(waitForReady, 100, Ci.nsITimer.TYPE_ONE_SHOT);
+  }
+};
+
+/** Generic method to send a message to the server. */
+function sendToServer(msg, value, commandId) {
+  if (commandId) {
+    value.commandId = commandId;
   }
   sendAsyncMessage(msg, value);
 }
 
-/**
- * Send response back to server
- */
 function sendResponse(value, command_id) {
   sendToServer("Marionette:done", value, command_id);
 }
 
-/**
- * Send ack back to server
- */
 function sendOk(command_id) {
   sendToServer("Marionette:ok", {}, command_id);
 }
 
-/**
- * Send log message to server
- */
 function sendLog(msg) {
-  sendToServer("Marionette:log", { message: msg });
+  sendToServer("Marionette:log", {message: msg});
 }
 
-/**
- * Send error message to server
- */
-function sendError(message, status, trace, command_id) {
-  let error_msg = { message: message, status: status, stacktrace: trace };
-  sendToServer("Marionette:error", error_msg, command_id);
+function sendError(message, status, trace, commandId) {
+  let error_msg = {message: message, status: status, stacktrace: trace};
+  sendToServer("Marionette:error", error_msg, commandId);
 }
 
-/**
- * Clear test values after completion of test
- */
-function resetValues() {
-  sandbox = null;
-  curFrame = content;
-  mouseEventsOnly = false;
-}
-
-/**
- * Dump a logline to stdout. Prepends logline with a timestamp.
- */
+/** Dump a logline to stdout. Prepends logline with a timestamp. */
 function dumpLog(logline) {
   dump(Date.now() + " Marionette: " + logline);
 }
 
-/**
- * Check if our context was interrupted
- */
 function wasInterrupted() {
   if (previousFrame) {
     let element = content.document.elementFromPoint((content.innerWidth/2), (content.innerHeight/2));
@@ -385,7 +353,7 @@ function createExecuteContentSandbox(aWindow, timeout) {
   sandbox.window = aWindow;
   sandbox.document = sandbox.window.document;
   sandbox.navigator = sandbox.window.navigator;
-  sandbox.testUtils = utils;
+  sandbox.testUtils = events;
   sandbox.asyncTestCommandId = asyncTestCommandId;
 
   let marionette = new Marionette(this, aWindow, "content",
@@ -798,7 +766,8 @@ function elementInViewport(el) {
  */
 function checkVisible(el) {
   //check if the element is visible
-  let visible = utils.isElementDisplayed(el);
+  //let visible = atoms.isElementDisplayed(el);
+  let visible = isElementDisplayed2(el);
   if (!visible) {
     return false;
   }
@@ -1416,8 +1385,8 @@ function clickElement(msg) {
   try {
     el = elementManager.getKnownElement(msg.json.id, curFrame);
     if (checkVisible(el)) {
-      if (utils.isElementEnabled(el)) {
-        utils.synthesizeMouseAtCenter(el, {}, el.ownerDocument.defaultView)
+      if (atoms.isElementEnabled(el)) {
+        events.synthesizeMouseAtCenter(el, {}, el.ownerDocument.defaultView)
       }
       else {
         sendError("Element is not Enabled", 12, null, command_id)
@@ -1429,7 +1398,8 @@ function clickElement(msg) {
     sendOk(command_id);
   }
   catch (e) {
-    sendError(e.message, e.code, e.stack, command_id);
+    let code = "code" in e ? e.code : 13 /* unknown error */;
+    sendError(e.message, code, e.stack, command_id);
   }
 }
 
@@ -1440,7 +1410,7 @@ function getElementAttribute(msg) {
   let command_id = msg.json.command_id;
   try {
     let el = elementManager.getKnownElement(msg.json.id, curFrame);
-    sendResponse({value: utils.getElementAttribute(el, msg.json.name)},
+    sendResponse({value: atoms.getElementAttribute(el, msg.json.name)},
                  command_id);
   }
   catch (e) {
@@ -1455,7 +1425,7 @@ function getElementText(msg) {
   let command_id = msg.json.command_id;
   try {
     let el = elementManager.getKnownElement(msg.json.id, curFrame);
-    sendResponse({value: utils.getElementText(el)}, command_id);
+    sendResponse({value: atoms.getElementText(el)}, command_id);
   }
   catch (e) {
     sendError(e.message, e.code, e.stack, command_id);
@@ -1476,6 +1446,15 @@ function getElementTagName(msg) {
   }
 }
 
+function isElementDisplayed2(el) {
+	logger.info("isElementDisplayed2");
+	var window = curWin;
+	return function() {
+		logger.info("window=" + window);
+		return atoms.isElementDisplayed(el);
+	};
+}
+
 /**
  * Check if element is displayed
  */
@@ -1483,7 +1462,9 @@ function isElementDisplayed(msg) {
   let command_id = msg.json.command_id;
   try {
     let el = elementManager.getKnownElement(msg.json.id, curFrame);
-    sendResponse({value: utils.isElementDisplayed(el)}, command_id);
+    //sendResponse({value: atoms.isElementDisplayed(el)}, command_id);
+    logger.info("BEFORE:");
+    sendResponse({value: isElementDisplayed2(el)}, command_id);
   }
   catch (e) {
     sendError(e.message, e.code, e.stack, command_id);
@@ -1579,7 +1560,7 @@ function isElementEnabled(msg) {
   let command_id = msg.json.command_id;
   try {
     let el = elementManager.getKnownElement(msg.json.id, curFrame);
-    sendResponse({value: utils.isElementEnabled(el)}, command_id);
+    sendResponse({value: atoms.isElementEnabled(el)}, command_id);
   }
   catch (e) {
     sendError(e.message, e.code, e.stack, command_id);
@@ -1593,7 +1574,7 @@ function isElementSelected(msg) {
   let command_id = msg.json.command_id;
   try {
     let el = elementManager.getKnownElement(msg.json.id, curFrame);
-    sendResponse({value: utils.isElementSelected(el)}, command_id);
+    sendResponse({value: atoms.isElementSelected(el)}, command_id);
   }
   catch (e) {
     sendError(e.message, e.code, e.stack, command_id);
@@ -1609,7 +1590,7 @@ function sendKeysToElement(msg) {
   let el = elementManager.getKnownElement(msg.json.id, curFrame);
   let keysToSend = msg.json.value;
 
-  utils.sendKeysToElement(curFrame, el, keysToSend, sendOk, sendError, command_id);
+  evens.sendKeysToElement(curFrame, el, keysToSend, sendOk, sendError, command_id);
 }
 
 /**
@@ -1639,7 +1620,7 @@ function clearElement(msg) {
   let command_id = msg.json.command_id;
   try {
     let el = elementManager.getKnownElement(msg.json.id, curFrame);
-    utils.clearElement(el);
+    atoms.clearElement(el);
     sendOk(command_id);
   }
   catch (e) {
@@ -2068,5 +2049,6 @@ function takeScreenshot(msg) {
   sendResponse({value: data}, msg.json.command_id);
 }
 
-// Call register self when we get loaded
-registerSelf();
+let listener = new MarionetteListener();
+listener.startListeners();
+listener.register();

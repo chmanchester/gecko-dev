@@ -3,11 +3,13 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
- *
  * This file contains common code that is shared between marionette-server.js
  * and marionette-listener.js.
- *
  */
+
+"use strict";
+
+const EXPORTED_SYMBOLS = ["createStackMessage", "MarionetteLogObj"];
 
 /**
  * Creates an error message for a JavaScript exception thrown during
@@ -28,14 +30,13 @@
           pythonLine The line number of the above test file.
           script The JS script being executed in text form.
  */
-this.createStackMessage = function createStackMessage(error, fnName, pythonFile,
-  pythonLine, script) {
+function createStackMessage(error, fnName, pythonFile, pythonLine, script) {
   let python_stack = fnName + " @" + pythonFile;
   if (pythonLine !== null) {
     python_stack += ", line " + pythonLine;
   }
   let trace, msg;
-  if (typeof(error) == "object" && 'name' in error && 'stack' in error) {
+  if (typeof(error) == "object" && "name" in error && "stack" in error) {
     let stack = error.stack.split("\n");
     let match = stack[0].match(/:(\d+):\d+$/);
     let line = match ? parseInt(match[1]) : 0;
@@ -46,14 +47,15 @@ this.createStackMessage = function createStackMessage(error, fnName, pythonFile,
   }
   else {
     trace = python_stack;
-    msg = error + "";
+    msg = String(error);
   }
   return [msg, trace];
 }
 
-this.MarionetteLogObj = function MarionetteLogObj() {
+function MarionetteLogObj() {
   this.logs = [];
 }
+
 MarionetteLogObj.prototype = {
   /**
    * Log message. Accepts user defined log-level.
@@ -62,9 +64,10 @@ MarionetteLogObj.prototype = {
    * @param level String
    *        The logging level to be used
    */
-  log: function ML_log(msg, level) {
+  log: function(msg, level) {
     let lev = level ? level : "INFO";
-    this.logs.push( [lev, msg, (new Date()).toString()]);
+    let stamp = (new Date()).toString();
+    this.logs.push([lev, msg, stamp]);
   },
 
   /**
@@ -72,16 +75,16 @@ MarionetteLogObj.prototype = {
    * @param msgs Object
    *        Takes a list of strings
    */
-  addLogs: function ML_addLogs(msgs) {
-    for (let i = 0; i < msgs.length; i++) {
-      this.logs.push(msgs[i]);
+  addLogs: function(msgs) {
+    for (var msg of msgs) {
+      this.logs.push(msg);
     }
   },
   
   /**
    * Return all logged messages.
    */
-  getLogs: function ML_getLogs() {
+  getLogs: function() {
     let logs = this.logs;
     this.clearLogs();
     return logs;
@@ -90,7 +93,7 @@ MarionetteLogObj.prototype = {
   /**
    * Clears the logs
    */
-  clearLogs: function ML_clearLogs() {
+  clearLogs: function() {
     this.logs = [];
   },
-}
+};

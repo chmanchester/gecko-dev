@@ -2,19 +2,25 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+//const {classes: Cc, interface: Ci, utils: Cu} = Components;
+
 this.CC = Components.Constructor;
 this.Cc = Components.classes;
 this.Ci = Components.interfaces;
 this.Cu = Components.utils;
 this.Cr = Components.results;
 
+
 const MARIONETTE_CONTRACTID = "@mozilla.org/marionette;1";
 const MARIONETTE_CID = Components.ID("{786a1369-dca5-4adc-8486-33d23c88010a}");
-const MARIONETTE_ENABLED_PREF = 'marionette.defaultPrefs.enabled';
-const MARIONETTE_FORCELOCAL_PREF = 'marionette.force-local';
-const MARIONETTE_LOG_PREF = 'marionette.logging';
 
-this.ServerSocket = CC("@mozilla.org/network/server-socket;1",
+const DEFAULT_PORT = 2828;
+const ENABLED_PREF = "marionette.defaultPrefs.enabled";
+const PORT_PREF = "marionette.defaultPrefs.port";
+const FORCELOCAL_PREF = "marionette.force-local";
+const LOG_PREF = "marionette.logging";
+
+let ServerSocket = CC("@mozilla.org/network/server-socket;1",
                        "nsIServerSocket",
                        "initSpecialConnection");
 
@@ -23,8 +29,9 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/Log.jsm");
 
-let loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
-               .getService(Ci.mozIJSSubScriptLoader);
+Cu.import("chrome://marionette/content/marionette-server.js");
+
+let loader = Cc["@mozilla.org/moz/jssubscript-loader;1"].getService(Ci.mozIJSSubScriptLoader);
 
 function MarionetteComponent() {
   this._loaded = false;
@@ -45,9 +52,8 @@ function MarionetteComponent() {
       let formatter = new Log.BasicFormatter();
       this.logger.addAppender(new Log.DumpAppender(formatter));
     }
-  }
-  catch(e) {}
-}
+  } catch (e) {}
+};
 
 MarionetteComponent.prototype = {
   classDescription: "Marionette component",
@@ -61,39 +67,39 @@ MarionetteComponent.prototype = {
   finalUiStartup: false,
   _marionetteServer: null,
 
-  onSocketAccepted: function mc_onSocketAccepted(aSocket, aTransport) {
+  onSocketAccepted: function(aSocket, aTransport) {
     this.logger.info("onSocketAccepted for Marionette dummy socket");
   },
 
-  onStopListening: function mc_onStopListening(aSocket, status) {
+  onStopListening: function(aSocket, status) {
     this.logger.info("onStopListening for Marionette dummy socket, code " + status);
     aSocket.close();
   },
 
-  // Check cmdLine argument for --marionette
-  handle: function mc_handle(cmdLine) {
+  // Check --marionette flag
+  handle: function(cmdLine) {
     // If the CLI is there then lets do work otherwise nothing to see
     if (cmdLine.handleFlag("marionette", false)) {
       this.enabled = true;
-      this.logger.info("marionette enabled via command-line");
+      this.logger.info("Marionette enabled via command-line flag");
       this.init();
     }
   },
 
-  observe: function mc_observe(aSubject, aTopic, aData) {
+  observe: function(aSubject, aTopic, aData) {
     switch (aTopic) {
       case "profile-after-change":
-        // Using final-ui-startup as the xpcom category doesn't seem to work,
+        // Using final-ui-startup as the XPCOM category doesn't seem to work,
         // so we wait for that by adding an observer here.
         this.observerService.addObserver(this, "final-ui-startup", false);
 #ifdef ENABLE_MARIONETTE
         let enabledPref = false;
         try {
-          enabledPref = Services.prefs.getBoolPref(MARIONETTE_ENABLED_PREF);
+          enabledPref = Services.prefs.getBoolPref(ENABLED_PREF);
         } catch(e) {}
         if (enabledPref) {
           this.enabled = true;
-          this.logger.info("marionette enabled via build flag and pref");
+          this.logger.info("Marionette enabled via build flag and pref");
 
           // We want to suppress the modal dialog that's shown
           // when starting up in safe-mode to enable testing.
@@ -120,7 +126,7 @@ MarionetteComponent.prototype = {
     }
   },
 
-  _suppressSafeModeDialog: function mc_suppressSafeModeDialog(aWindow) {
+  _suppressSafeModeDialog: function(aWindow) {
     // Wait for the modal dialog to finish loading.
     aWindow.addEventListener("load", function onLoad() {
       aWindow.removeEventListener("load", onLoad);
@@ -134,18 +140,17 @@ MarionetteComponent.prototype = {
     });
   },
 
-  init: function mc_init() {
+  init: function() {
+    this.logger.info("HEEEEEEEY");
+
     if (!this._loaded && this.enabled && this.finalUiStartup) {
       this._loaded = true;
 
-      let marionette_forcelocal = this.appName == 'B2G' ? false : true;
-      try {
-        marionette_forcelocal = Services.prefs.getBoolPref(MARIONETTE_FORCELOCAL_PREF);
-      }
-      catch(e) {}
-      Services.prefs.setBoolPref(MARIONETTE_FORCELOCAL_PREF, marionette_forcelocal);
+      if (this.appName == "B2G")
+        Services.prefs.setBoolPref(FORCELOCAL_PREF, false);
+      let forceLocal = Services.prefs.getBoolPref(FORCELOCAL_PREF);
 
-      if (!marionette_forcelocal) {
+      if (!forceLocal) {
         // See bug 800138.  Because the first socket that opens with
         // force-local=false fails, we open a dummy socket that will fail.
         // keepWhenOffline=true so that it still work when offline (local).
@@ -155,32 +160,25 @@ MarionetteComponent.prototype = {
         insaneSacrificialGoat.asyncListen(this);
       }
 
-      let port;
+      let port = DEFAULT_PORT;
       try {
-        port = Services.prefs.getIntPref('marionette.defaultPrefs.port');
-      }
-      catch(e) {
-        port = 2828;
-      }
+        port = Services.prefs.getIntPref(PORT_PREF);
+      } catch (e) {}
+
       try {
-        loader.loadSubScript("chrome://marionette/content/marionette-server.js");
-        let forceLocal = Services.prefs.getBoolPref(MARIONETTE_FORCELOCAL_PREF);
         this._marionetteServer = new MarionetteServer(port, forceLocal);
-        this.logger.info("Marionette server ready");
-      }
-      catch(e) {
-        this.logger.error('exception: ' + e.name + ', ' + e.message);
+        this._marionetteServer.start();
+      } catch (e) {
+        this.logger.error("Exception on starting server: " + e.name + ": " + e.message);
       }
     }
   },
 
-  uninit: function mc_uninit() {
-    if (this._marionetteServer) {
-      this._marionetteServer.closeListener();
-    }
+  uninit: function() {
+    if (this._marionetteServer)
+      this._marionetteServer.stop();
     this._loaded = false;
   },
-
 };
 
 this.NSGetFactory = XPCOMUtils.generateNSGetFactory([MarionetteComponent]);
