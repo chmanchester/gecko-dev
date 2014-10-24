@@ -16,7 +16,7 @@ marionette.jar:
   content/dispatcher.js  (dispatcher.js)
   content/error.js  (error.js)
   content/chrome.js  (chrome.js)
-  content/response.js  (response.js)
+  content/cmdproc.js  (cmdproc.js)
 #ifdef ENABLE_TESTS
   content/test.xul  (client/marionette/chrome/test.xul)
   content/test2.xul  (client/marionette/chrome/test2.xul)

@@ -2,14 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-//const {classes: Cc, interface: Ci, utils: Cu} = Components;
+"use strict";
 
+const {Constructor: CC, classes: Cc, interfaces: Ci, utils: Cu} = Components;
+
+/*
 this.CC = Components.Constructor;
 this.Cc = Components.classes;
 this.Ci = Components.interfaces;
 this.Cu = Components.utils;
 this.Cr = Components.results;
-
+*/
 
 const MARIONETTE_CONTRACTID = "@mozilla.org/marionette;1";
 const MARIONETTE_CID = Components.ID("{786a1369-dca5-4adc-8486-33d23c88010a}");
@@ -19,10 +22,6 @@ const ENABLED_PREF = "marionette.defaultPrefs.enabled";
 const PORT_PREF = "marionette.defaultPrefs.port";
 const FORCELOCAL_PREF = "marionette.force-local";
 const LOG_PREF = "marionette.logging";
-
-let ServerSocket = CC("@mozilla.org/network/server-socket;1",
-                       "nsIServerSocket",
-                       "initSpecialConnection");
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
@@ -39,7 +38,7 @@ function MarionetteComponent() {
 
   // set up the logger
   this.logger = Log.repository.getLogger("Marionette");
-  this.logger.level = Log.Level["Trace"];
+  this.logger.level = Log.Level.Trace;
   let dumper = false;
 #ifdef DEBUG
   dumper = true;
@@ -48,7 +47,7 @@ function MarionetteComponent() {
   dumper = true;
 #endif
   try {
-    if (dumper || Services.prefs.getBoolPref(MARIONETTE_LOG_PREF)) {
+    if (dumper || Services.prefs.getBoolPref(LOG_PREF)) {
       let formatter = new Log.BasicFormatter();
       this.logger.addAppender(new Log.DumpAppender(formatter));
     }
@@ -141,14 +140,12 @@ MarionetteComponent.prototype = {
   },
 
   init: function() {
-    this.logger.info("HEEEEEEEY");
-
     if (!this._loaded && this.enabled && this.finalUiStartup) {
-      this._loaded = true;
-
-      if (this.appName == "B2G")
-        Services.prefs.setBoolPref(FORCELOCAL_PREF, false);
-      let forceLocal = Services.prefs.getBoolPref(FORCELOCAL_PREF);
+      let forceLocal = this.appName == "B2G" ? false : true;
+      try {
+        forceLocal = Services.prefs.getBoolPref(FORCELOCAL_PREF);
+      } catch (e) {}
+      Services.prefs.setBoolPref(FORCELOCAL_PREF, forceLocal);
 
       if (!forceLocal) {
         // See bug 800138.  Because the first socket that opens with
@@ -156,6 +153,9 @@ MarionetteComponent.prototype = {
         // keepWhenOffline=true so that it still work when offline (local).
         // This allows the following attempt by Marionette to open a socket
         // to succeed.
+        let ServerSocket = CC("@mozilla.org/network/server-socket;1",
+                       "nsIServerSocket",
+                       "initSpecialConnection");
         let insaneSacrificialGoat = new ServerSocket(666, Ci.nsIServerSocket.KeepWhenOffline, 4);
         insaneSacrificialGoat.asyncListen(this);
       }
@@ -165,12 +165,15 @@ MarionetteComponent.prototype = {
         port = Services.prefs.getIntPref(PORT_PREF);
       } catch (e) {}
 
+     this._marionetteServer = new MarionetteServer(port, forceLocal);
       try {
-        this._marionetteServer = new MarionetteServer(port, forceLocal);
         this._marionetteServer.start();
+        this.logger.info("Marionette listening on port " + port);
       } catch (e) {
         this.logger.error("Exception on starting server: " + e.name + ": " + e.message);
       }
+
+      this._loaded = true;
     }
   },
 

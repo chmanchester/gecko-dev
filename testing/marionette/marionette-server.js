@@ -4,10 +4,11 @@
 
 "use strict";
 
-let {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+const {Constructor: CC, classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
-let loader = Cc["@mozilla.org/moz/jssubscript-loader;1"].getService(Ci.mozIJSSubScriptLoader);
-let uuidGen = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator);
+const loader = Cc["@mozilla.org/moz/jssubscript-loader;1"].getService(Ci.mozIJSSubScriptLoader);
+const uuidGen = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator);
+const ServerSocket = CC("@mozilla.org/network/server-socket;1", "nsIServerSocket", "initSpecialConnection");
 
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/Log.jsm");
@@ -15,6 +16,8 @@ Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
 Cu.import("chrome://marionette/content/atoms.js");
+Cu.import("chrome://marionette/content/chrome.js");
+Cu.import("chrome://marionette/content/dispatcher.js");
 Cu.import("chrome://marionette/content/marionette-common.js");
 Cu.import("chrome://marionette/content/marionette-elements.js");
 Cu.import("chrome://marionette/content/marionette-simpletest.js");
@@ -31,7 +34,10 @@ loader.loadSubScript("chrome://marionette/content/marionette-frame-manager.js");
 let logger = Log.repository.getLogger("Marionette");
 logger.info("marionette-server.js loaded");
 
+const EXPORTED_SYMBOLS = ["MarionetteServer"];
 const FRAME_SCRIPT = "chrome://marionette/content/marionette-listener.js";
+const SPECIAL_POWERS_PREF = "security.turn_off_all_security_so_that_viruses_can_take_over_this_computer";
+const CONTENT_LISTENER_PREF = "marionette.contentListener";
 
 // Encapsulates the Marionette session and listens for client connections.
 // It holds references to the connected sockets.
@@ -47,15 +53,14 @@ function MarionetteServer(port, forceLocal) {
 
 MarionetteServer.prototype.init = function() {
   // SpecialPowers requires insecure automation-only features that we put behind a pref
-  Services.prefs.setBoolPref(
-    "security.turn_off_all_security_so_that_viruses_can_take_over_this_computer", true);
+  Services.prefs.setBoolPref(SPECIAL_POWERS_PREF, true);
   let specialpowers = {};
   loader.loadSubScript(
     "chrome://specialpowers/content/SpecialPowersObserver.js", specialpowers);
   specialpowers.specialPowersObserver = new specialpowers.SpecialPowersObserver();
   specialpowers.specialPowersObserver.init();
   
-  Services.prefs.setBoolPref("marionette.contentListener", false);
+  Services.prefs.setBoolPref(CONTENT_LISTENER_PREF, false);
   let appName = Services.appinfo.name;
   
   let bypassOffline = false;
@@ -84,7 +89,7 @@ MarionetteServer.prototype.init = function() {
   }
 
   // TODO(ato): Fix this ternary:
-  this.driver = new MarionetteChrome(qemu == "1" ? "qemu" : (!device ? "desktop" : device));
+  this.driver = new MarionetteChrome(appName, qemu == "1" ? "qemu" : (!device ? "desktop" : device));
 };
 
 MarionetteServer.prototype.start = function() {
@@ -104,7 +109,6 @@ MarionetteServer.prototype.stop = function() {
 	if (!this.alive)
 		return;
 	this.closeListener();
-	logger.info("Server stopped, no longer accepting new connections");
 };
 
 MarionetteServer.prototype.onSocketAccepted = function(serverSocket, clientSocket) {
@@ -113,7 +117,7 @@ MarionetteServer.prototype.onSocketAccepted = function(serverSocket, clientSocke
   let input = clientSocket.openInputStream(0, 0, 0);
   let output = clientSocket.openOutputStream(0, 0, 0);
   let transport = new DebuggerTransport(input, output);
-  let connId = "conn" + this.nextConnID++ + ".";
+  let connId = "conn" + this.nextConnId++ + ".";
   let conn = new Dispatcher(connId, transport, this);
   this.conns[connId] = conn;
 

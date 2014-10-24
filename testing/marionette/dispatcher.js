@@ -2,17 +2,20 @@
 
 const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
-let loader = Cc["@mozilla.org/moz/jssubscript-loader;1"].getService(Ci.mozIJSSubScriptLoader);
+const loader = Cc["@mozilla.org/moz/jssubscript-loader;1"].getService(Ci.mozIJSSubScriptLoader);
+const uuidGen = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator);
 
-Cu.import("chrome://gre/modules/Log.jsm");
+Cu.import("resource://gre/modules/Log.jsm");
 
-Cu.import("chrome://marionette/content/marionette-server.js");
-Cu.import("chrome://marionette/content/response.js");
+Cu.import("chrome://marionette/content/cmdproc.js");
+Cu.import("chrome://marionette/content/chrome.js");
 
 // Bug 1083711: Load transport.js as an SDK module instead of subscript
 loader.loadSubScript("resource://gre/modules/devtools/transport/transport.js");
 
-let logger = Log.repository.getLogger("Marionette");
+const EXPORTED_SYMBOLS = ["Dispatcher"];
+
+const logger = Log.repository.getLogger("Marionette");
 logger.info("dispatcher.js loaded");
 
 function Dispatcher(connId, transport, server, chromeCls=MarionetteChrome) {
@@ -20,6 +23,7 @@ function Dispatcher(connId, transport, server, chromeCls=MarionetteChrome) {
 	this.conn = transport;
 	this.server = server;
 	this.driver = new chromeCls();
+	this.commandProcessor = new CommandProcessor(this.driver);
 	this.conn.hooks = this.driver;
 
 	// Marionette uses a protocol based on the debugger server, which requires
@@ -41,7 +45,8 @@ Dispatcher.prototype.closeListener = function() {
 // This is called when we receive data on the socket from the client.
 // Data format is Marionette protocol.
 Dispatcher.prototype.onPacket = function(packet) {
-	this.driver.execute(rawData, this.send);
+	this.commandId = this.beginNewCommand();
+	this.commandProcessor.execute(rawData, this.send);
 };
 
 // Triggered on a message from the listener (content process).
@@ -54,90 +59,89 @@ Dispatcher.prototype.receiveMessage = function(msg) {
 	}
 };
 
+Dispatcher.prototype.sayHello = function() {
+  this.conn.send({from: "root",
+                  applicationType: "gecko",
+                  traits: []});
+};
+
+Dispatcher.prototype.getMarionetteID = function() {
+  this.conn.send({"from": "root", "id": this.actorId});
+};
+
 // Callback from commands as well as messages from listener.
 // This message is marshaled and send back to the client.
 Dispatcher.prototype.send = function(msg) {
+	let packet = {from: this.actorId, value: msg};
+
+	// The Marionette protocol mandates that we send errors
+	// using a separate key.  For compatibility with WebDriver
+	// we replicate it by also sending value.
+	if (msg.status > 0)
+		packet.error = msg.value;  // TODO(ato): Or just msg?
+
+	// Responses without a value should have the "ok"
+	// field set to a positive value.
+	if (msg.status == 0 && msg.value === null)
+		packet.ok = true;
+
+	this.sendResponse(packet, this.commandId);
+};
+ 
+// Send a packet to client.  commandId is a unique identifier assigned
+// to the client's request that is used to distinguish the asynchronous
+// responses.
+Dispacher.prototype.sendResponse = function(packet, commandId) {	
 	let payload = JSON.stringify(msg);
+	if (this.isEmulatorCallback(commandId)) {
+		this.sendEmulatorCallback(payload);
+	} else {
+		this.sendToClient(payload, commandId);
+	}
+};
+
+Dispatcher.prototype.sendOk = function(commandId) {
+  this.sendToClient({from: this.actorId, ok: true}, commandId);
+};
+
+Dispatcher.prototype.sendEmulatorCallback(payload) {
 	this.conn.send(payload);
 };
 
-Dispatcher.prototype.requestTypes = {
-  "getMarionetteID": this.driver.getMarionetteID,
-  "sayHello": this.driver.sayHello,
-  "newSession": this.driver.newSession,
-  "getSessionCapabilities": this.driver.getSessionCapabilities,
-  "log": this.driver.log,
-  "getLogs": this.driver.getLogs,
-  "setContext": this.driver.setContext,
-  "executeScript": this.driver.execute,
-  "setScriptTimeout": this.driver.setScriptTimeout,
-  "timeouts": this.driver.timeouts,
-  "singleTap": this.driver.singleTap,
-  "actionChain": this.driver.actionChain,
-  "multiAction": this.driver.multiAction,
-  "executeAsyncScript": this.driver.executeWithCallback,
-  "executeJSScript": this.driver.executeJSScript,
-  "setSearchTimeout": this.driver.setSearchTimeout,
-  "findElement": this.driver.findElement,
-  "findChildElement": this.driver.findChildElements, // Needed for WebDriver compat
-  "findElements": this.driver.findElements,
-  "findChildElements": this.driver.findChildElements, // Needed for WebDriver compat
-  "clickElement": this.driver.clickElement,
-  "getElementAttribute": this.driver.getElementAttribute,
-  "getElementText": this.driver.getElementText,
-  "getElementTagName": this.driver.getElementTagName,
-  "isElementDisplayed": this.driver.isElementDisplayed,
-  "getElementValueOfCssProperty": this.driver.getElementValueOfCssProperty,
-  "submitElement": this.driver.submitElement,
-  "getElementSize": this.driver.getElementSize,  //deprecated
-  "getElementRect": this.driver.getElementRect,
-  "isElementEnabled": this.driver.isElementEnabled,
-  "isElementSelected": this.driver.isElementSelected,
-  "sendKeysToElement": this.driver.sendKeysToElement,
-  "getElementLocation": this.driver.getElementLocation,  // deprecated
-  "getElementPosition": this.driver.getElementLocation,  // deprecated
-  "clearElement": this.driver.clearElement,
-  "getTitle": this.driver.getTitle,
-  "getWindowType": this.driver.getWindowType,
-  "getPageSource": this.driver.getPageSource,
-  "get": this.driver.get,
-  "goUrl": this.driver.get,  // deprecated
-  "getCurrentUrl": this.driver.getCurrentUrl,
-  "getUrl": this.driver.getCurrentUrl,  // deprecated
-  "goBack": this.driver.goBack,
-  "goForward": this.driver.goForward,
-  "refresh":  this.driver.refresh,
-  "getWindowHandle": this.driver.getWindowHandle,
-  "getCurrentWindowHandle":  this.driver.getWindowHandle,  // Selenium 2 compat
-  "getWindow":  this.driver.getWindowHandle,  // deprecated
-  "getWindowHandles": this.driver.getWindowHandles,
-  "getCurrentWindowHandles": this.driver.getWindowHandles,  // Selenium 2 compat
-  "getWindows":  this.driver.getWindowHandles,  // deprecated
-  "getWindowPosition": this.driver.getWindowPosition,
-  "setWindowPosition": this.driver.setWindowPosition,
-  "getActiveFrame": this.driver.getActiveFrame,
-  "switchToFrame": this.driver.switchToFrame,
-  "switchToWindow": this.driver.switchToWindow,
-  "deleteSession": this.driver.deleteSession,
-  "emulatorCmdResult": this.driver.emulatorCmdResult,
-  "importScript": this.driver.importScript,
-  "clearImportedScripts": this.driver.clearImportedScripts,
-  "getAppCacheStatus": this.driver.getAppCacheStatus,
-  "close": this.driver.close,
-  "closeWindow": this.driver.close,  // deprecated
-  "setTestName": this.driver.setTestName,
-  "takeScreenshot": this.driver.takeScreenshot,
-  "screenShot": this.driver.takeScreenshot,  // deprecated
-  "screenshot": this.driver.takeScreenshot,  // Selenium 2 compat
-  "addCookie": this.driver.addCookie,
-  "getCookies": this.driver.getCookies,
-  "getAllCookies": this.driver.getCookies,  // deprecated
-  "deleteAllCookies": this.driver.deleteAllCookies,
-  "deleteCookie": this.driver.deleteCookie,
-  "getActiveElement": this.driver.getActiveElement,
-  "getScreenOrientation": this.driver.getScreenOrientation,
-  "setScreenOrientation": this.driver.setScreenOrientation,
-  "getWindowSize": this.driver.getWindowSize,
-  "setWindowSize": this.driver.setWindowSize,
-  "maximizeWindow": this.driver.maximizeWindow
+Dispatcher.prototype.sendToClient = function(payload, commandId) {
+	if (!commandId) {
+		logger.warn("Got response with no command ID");
+		return;
+	}
+
+	// A null value for this.commandId means we've already processed
+	// a message for the previous state, and so the current message is
+	// a duplicate.
+	if (!this.commandId) {
+		logger.warn("Ignoring duplicate response for command ID: " + commandId);
+		return;
+	}
+
+	// If the current command ID doesn't match ours it's out of sync,
+	// and we choose to ignore it.
+	if (this.isOutOfSync(commandId)) {
+		logger.warn("Ignoring out-of-sync response with command ID: " + commandId);
+		return;
+	}
+
+	logger.debug("<- " + payload);
+	this.conn.send(payload);
+	this.commandId = null;
+};
+
+Dispatcher.prototype.beginNewCommand = function() {
+    return uuidGen.generateUUID().toString();
+};
+
+Dispatcher.prototype.isEmulatorCallback = function(commandId) {
+	return commandId < 0;
+};
+
+Dispatcher.prototype.isOutOfSync = function(commandId) {
+	return this.commandId != commandId;
 };

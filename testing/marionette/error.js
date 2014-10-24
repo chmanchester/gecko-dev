@@ -8,7 +8,8 @@ error.toJSON = function(exc) {
 	let frames = [];
 	let json = {
 		"message": exc.message ? exc.message : exc.toString(),
-		"stackTrace": frames
+		"stacktrace": frames,
+		"status": exc.code
 	};
 	
 	if (exc.stack) {

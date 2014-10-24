@@ -28,6 +28,8 @@ loader.loadSubScript("chrome://marionette/content/EventUtils.js", events);
 loader.loadSubScript("chrome://marionette/content/ChromeUtils.js", events);
 loader.loadSubScript("chrome://marionette/content/marionette-sendkeys.js", events);
 
+const EXPORTED_SYMBOLS = ["MarionetteListener"];
+
 let logger = Log.repository.getLogger("Marionette");
 let marionetteLogObj = new MarionetteLogObj();
 var curWin = content;
