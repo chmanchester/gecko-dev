@@ -101,7 +101,6 @@ MarionetteServer.prototype.start = function() {
 		flags |= Ci.nsIServerSocket.LoopbackOnly;
 	this.listener = new ServerSocket(this.port, flags, 0);
 	this.listener.asyncListen(this);
-	logger.info("Listening on port " + this.listener.port);
 	this.alive = true;
 };
 
@@ -109,10 +108,11 @@ MarionetteServer.prototype.stop = function() {
 	if (!this.alive)
 		return;
 	this.closeListener();
+	this.alive = false;
 };
 
 MarionetteServer.prototype.onSocketAccepted = function(serverSocket, clientSocket) {
-  logger.debug("Accepted connection from " + clientSocket.host + ":" + clientSocket.port);
+  logger.info("Accepted connection from " + clientSocket.host + ":" + clientSocket.port);
 
   let input = clientSocket.openInputStream(0, 0, 0);
   let output = clientSocket.openOutputStream(0, 0, 0);
@@ -122,8 +122,11 @@ MarionetteServer.prototype.onSocketAccepted = function(serverSocket, clientSocke
   this.conns[connId] = conn;
 
   // Create a root actor for the connection and send the hello packet.
+  logger.info("server: asking dispatcher to say hello");
   conn.sayHello();
+  logger.info("sayHello returned to MarionetteServer.onSocketAccepted");
   transport.ready();
+  logger.info("MarionetteServer.onSocketAccepted done");
 };
 
 MarionetteServer.prototype.closeListener = function() {
@@ -131,6 +134,8 @@ MarionetteServer.prototype.closeListener = function() {
   this.listener = null;
 };
 
-MarionetteServer.prototype._connectionClosed = function(conn) {
+MarionetteServer.prototype.onConnectionClosed = function(conn) {
+  logger.info("MarionetteServer.onConnectionClosed");
   delete this.conns[conn.id];
+  logger.info("MarionetteServer.onConnectionClosed done");
 };

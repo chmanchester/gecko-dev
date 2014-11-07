@@ -67,11 +67,11 @@ MarionetteComponent.prototype = {
   _marionetteServer: null,
 
   onSocketAccepted: function(aSocket, aTransport) {
-    this.logger.info("onSocketAccepted for Marionette dummy socket");
+    this.logger.debug("onSocketAccepted for Marionette dummy socket");
   },
 
   onStopListening: function(aSocket, status) {
-    this.logger.info("onStopListening for Marionette dummy socket, code " + status);
+    this.logger.debug("onStopListening for Marionette dummy socket, code " + status);
     aSocket.close();
   },
 
@@ -80,7 +80,7 @@ MarionetteComponent.prototype = {
     // If the CLI is there then lets do work otherwise nothing to see
     if (cmdLine.handleFlag("marionette", false)) {
       this.enabled = true;
-      this.logger.info("Marionette enabled via command-line flag");
+      this.logger.debug("Marionette enabled via command-line flag");
       this.init();
     }
   },
@@ -98,7 +98,7 @@ MarionetteComponent.prototype = {
         } catch(e) {}
         if (enabledPref) {
           this.enabled = true;
-          this.logger.info("Marionette enabled via build flag and pref");
+          this.logger.debug("Marionette enabled via build flag and pref");
 
           // We want to suppress the modal dialog that's shown
           // when starting up in safe-mode to enable testing.
@@ -168,7 +168,7 @@ MarionetteComponent.prototype = {
      this._marionetteServer = new MarionetteServer(port, forceLocal);
       try {
         this._marionetteServer.start();
-        this.logger.info("Marionette listening on port " + port);
+        this.logger.info("Listening on port " + port);
       } catch (e) {
         this.logger.error("Exception on starting server: " + e.name + ": " + e.message);
       }

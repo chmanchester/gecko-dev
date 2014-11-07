@@ -45,7 +45,7 @@ function FrameSendNotInitializedError(frame) {
   this.message = "Error sending message to frame (NS_ERROR_NOT_INITIALIZED)";
   this.toString = function() {
     return this.message + " " + this.frame + "; frame has closed.";
-  }
+  };
 }
 
 function FrameSendFailureError(frame) {
@@ -54,7 +54,7 @@ function FrameSendFailureError(frame) {
   this.message = "Error sending message to frame (NS_ERROR_FAILURE)";
   this.toString = function() {
     return this.message + " " + this.frame + "; frame not responding.";
-  }
+  };
 }
 
 const Context = {
@@ -69,13 +69,15 @@ Context.fromString = function(s) {
 	return null;
 };
 
-var ListenerProxy = function() {
-	__noSuchMethod__: function(name, args) {
-		let msg = args;
-		// commandId is populated by Dispatcher?
-		this.messageManager.sendAsyncMessage("Marionette:" + name, msg);
-	}
-};
+function ListenerProxy() {
+	return {
+		__noSuchMethod__: function(name, args) {
+			let msg = args;
+			// commandId is populated by Dispatcher?
+			this.messageManager.sendAsyncMessage("Marionette:" + name, msg);
+		}
+	};
+}
 
 /**
  * The server connection is responsible for all marionette API calls. It gets created
@@ -83,6 +85,7 @@ var ListenerProxy = function() {
  * mediates content calls by issuing appropriate messages to the content process.
  */
 function MarionetteChrome(appName, device) {
+  logger.info("MarionetteChrome");
   this.appName = appName;
 
   this.listener = new ListenerProxy();
@@ -130,6 +133,7 @@ function MarionetteChrome(appName, device) {
     "device": device,
     "version": Services.appinfo.version
   };
+  logger.info("MarionetteChrome done");
 }
 
 MarionetteChrome.prototype.unmarshal = function(payload) {
@@ -141,6 +145,7 @@ MarionetteChrome.prototype.unmarshal = function(payload) {
 };
 
 MarionetteChrome.prototype.execute = function(payload, respHandler) {
+	logger.info("MarionetteChrome.execute");
 	let msg, resp;
 	try {
 		msg = this.unmarshal(payload);
@@ -149,38 +154,10 @@ MarionetteChrome.prototype.execute = function(payload, respHandler) {
 	} catch (e) {
 		resp.sendError(e);
 	}
+	logger.info("MarionetteChrome.execute done");
 };
 
 MarionetteChrome.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIMessageListener,
-                                         Ci.nsIObserver,
-                                         Ci.nsISupportsWeakReference]),
-
-  /**
-   * Debugger transport callbacks:
-   */
-  onPacket: function MSC_onPacket(aPacket) {
-    // Dispatch the request
-    if (this.requestTypes && this.requestTypes[aPacket.name]) {
-      try {
-        this.requestTypes[aPacket.name].bind(this)(aPacket);
-      } catch(e) {
-        this.conn.send({ error: ("error occurred while processing '" +
-                                 aPacket.name),
-                        message: e.message });
-      }
-    } else {
-      this.conn.send({ error: "unrecognizedPacketType",
-                       message: ('Marionette does not ' +
-                                 'recognize the packet type "' +
-                                 aPacket.name + '"') });
-    }
-  },
-
-  onClosed: function MSC_onClosed(aStatus) {
-    this.server._connectionClosed(this);
-    this.sessionTearDown();
-  },
 
   /**
    * Helper methods:
@@ -382,7 +359,7 @@ MarionetteChrome.prototype = {
         }
         for (var child in el.childNodes) {
           this.getVisibleText(el.childNodes[child], lines);
-        };
+        }
       }
     }
     catch (e) {
@@ -511,7 +488,7 @@ MarionetteChrome.prototype = {
    * @param Object capabilities holds all the keys for capabilities
    *
    */
-  setSessionCapabilities: function MDA_setSessionCapabilities (capabilities) {
+  setSessionCapabilities: function(capabilities) {
     this.command_id = this.getCommandId();
     var tempCapabilities = {};
     for (var caps in this.sessionCapabilities) {
@@ -557,7 +534,7 @@ MarionetteChrome.prototype = {
     let val = cmd.parameters.value;
     let ctx = Context.fromString(val);
     if (ctx === null)
-      raise WebDriverError("Invalid context: " + val");
+      throw new WebDriverError("Invalid context: " + val);
     this.context = ctx;
   },
 
@@ -598,7 +575,7 @@ MarionetteChrome.prototype = {
     });
 
     _chromeSandbox.isSystemMessageListenerReady =
-        function() { return systemMessageListenerReady; }
+        function() { return systemMessageListenerReady; };
 
     if (specialPowers == true) {
       loader.loadSubScript("chrome://specialpowers/content/specialpowersAPI.js",
@@ -710,12 +687,12 @@ MarionetteChrome.prototype = {
         inactivityTimeoutHandler("timed out due to inactivity", 28);
        }, inactivityTimeout, Ci.nsITimer.TYPE_ONESHOT);
       }
-     }
+     };
      setTimer();
      this.heartbeatCallback = function resetInactivityTimer() {
       that.inactivityTimer.cancel();
       setTimer();
-     }
+     };
     }
 
     let curWindow = this.getCurrentWindow();
@@ -884,7 +861,7 @@ MarionetteChrome.prototype = {
         chromeAsyncReturnFunc("timed out due to inactivity", 28);
        }, inactivityTimeout, Ci.nsITimer.TYPE_ONESHOT);
       }
-     }
+     };
     }
 
     let curWindow = this.getCurrentWindow();
@@ -958,10 +935,10 @@ MarionetteChrome.prototype = {
       if (directInject) {
         script = cmd.parameters.script;
       } else {
-        script =  '__marionetteParams.push(returnFunc);'
-                + 'let marionetteScriptFinished = returnFunc;'
-                + 'let __marionetteFunc = function() {' + cmd.parameters.script + '};'
-                + '__marionetteFunc.apply(null, __marionetteParams);';
+        script =  '__marionetteParams.push(returnFunc);' +
+                'let marionetteScriptFinished = returnFunc;' +
+                'let __marionetteFunc = function() {' + cmd.parameters.script + '};' +
+                '__marionetteFunc.apply(null, __marionetteParams);';
       }
 
       this.executeScriptInSandbox(_chromeSandbox, script, directInject,
@@ -1193,7 +1170,7 @@ MarionetteChrome.prototype = {
 
     }
     else {
-      let x = parseInt(aRequest.parameters.x);;
+      let x = parseInt(aRequest.parameters.x);
       let y  = parseInt(aRequest.parameters.y);
 
       if (isNaN(x) || isNaN(y)) {
@@ -1275,7 +1252,7 @@ MarionetteChrome.prototype = {
         throw UnknownError("Error loading page");
       }
       checkTimer.initWithCallback(checkLoad.bind(this), 100, Ci.nsITimer.TYPE_ONE_SHOT);
-    }
+    };
 
     if (this.context == Context.CHROME) {
       let foundFrame = null;
@@ -1674,7 +1651,7 @@ MarionetteChrome.prototype = {
    *        'id' member holds the reference id to
    *        the element that will be checked
    */
-  isElementDisplayed: function MDA_isElementDisplayed(cmd, resp.) {
+  isElementDisplayed: function MDA_isElementDisplayed(cmd, resp) {
     let id = cmd.parameters.id;
 
     switch (this.context) {
@@ -2017,25 +1994,27 @@ MarionetteChrome.prototype = {
    * all other listeners. The main content listener persists after disconnect (it's the homescreen),
    * and can safely be reused.
    */
-  sessionTearDown: function MDA_sessionTearDown() {
+  sessionTearDown: function() {
+    logger.info("MarionetteChrome.sessionTearDown");
     if (this.curBrowser != null) {
       if (this.appName == "B2G") {
         this.globalMessageManager.broadcastAsyncMessage(
             "Marionette:sleepSession" + this.curBrowser.mainContentId, {});
         this.curBrowser.knownFrames.splice(
             this.curBrowser.knownFrames.indexOf(this.curBrowser.mainContentId), 1);
-      }
-      else {
+      } else {
         //don't set this pref for B2G since the framescript can be safely reused
         Services.prefs.setBoolPref("marionette.contentListener", false);
       }
+
       this.curBrowser.closeTab();
-      //delete session in each frame in each browser
+      // Delete session in each frame in each browser
       for (let win in this.browsers) {
         for (let i in this.browsers[win].knownFrames) {
           this.globalMessageManager.broadcastAsyncMessage("Marionette:deleteSession" + this.browsers[win].knownFrames[i], {});
         }
       }
+
       let winEnum = this.getWinEnumerator();
       while (winEnum.hasMoreElements()) {
         winEnum.getNext().messageManager.removeDelayedFrameScript(FRAME_SCRIPT);
@@ -2043,14 +2022,17 @@ MarionetteChrome.prototype = {
       this.curBrowser.frameManager.removeSpecialPowers();
       this.curBrowser.frameManager.removeMessageManagerListeners(this.globalMessageManager);
     }
+
     this.switchToGlobalMessageManager();
-    // reset frame to the top-most frame
+    // Reset frame to the top-most frame
     this.curFrame = null;
     if (this.mainFrame) {
       this.mainFrame.focus();
     }
-    this.deleteFile('marionetteChromeScripts');
-    this.deleteFile('marionetteContentScripts');
+    this.deleteFile("marionetteChromeScripts");
+    this.deleteFile("marionetteContentScripts");
+
+    logger.info("MarionetteChrome.sessionTearDown done");
   },
 
   /**
