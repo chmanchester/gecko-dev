@@ -210,6 +210,6 @@ function sendKeysToElement (document, element, keysToSend, successCallback, erro
     successCallback(command_id);
   }
   else {
-    errorCallback("Element is not visible", 11, null, command_id);
+    errorCallback({message: "Element is not visible", code: 11}, command_id);
   }
 };

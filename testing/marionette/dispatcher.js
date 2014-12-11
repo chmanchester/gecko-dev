@@ -7,9 +7,11 @@ const uuidGen = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerat
 
 Cu.import("resource://gre/modules/Log.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/Task.jsm");
 
 Cu.import("chrome://marionette/content/cmdproc.js");
 Cu.import("chrome://marionette/content/chrome.js");
+Cu.import("chrome://marionette/content/error.js");
 
 // Bug 1083711: Load transport.js as an SDK module instead of subscript
 loader.loadSubScript("resource://gre/modules/devtools/transport/transport.js");
@@ -17,157 +19,152 @@ loader.loadSubScript("resource://gre/modules/devtools/transport/transport.js");
 const EXPORTED_SYMBOLS = ["Dispatcher"];
 
 const logger = Log.repository.getLogger("Marionette");
-logger.info("dispatcher.js loaded");
 
-function Dispatcher(connId, transport, server, chromeCls=MarionetteChrome) {
-	logger.info("Dispatcher");
-	logger.info("connId=" + connId);
+function Dispatcher(connId, transport, server, chromeFactory) {
 	this.id = connId;
 	this.conn = transport;
 	this.server = server;
-	this.driver = new chromeCls();
+	this.driver = chromeFactory();
 	this.commandProcessor = new CommandProcessor(this.driver);
+
+	// Marionette uses a protocol based on the debugger server, which requires
+	// passing back actor ID's with responses.  Unlike the debugger server,
+	// we don't have multiple actors, so just use a dummy value of "0".
+	this.actorID = "0";
+
+	// Transport hooks are onPacket and onClosed.
 	this.conn.hooks = this;
 
 	// Marionette uses a protocol based on the debugger server, which requires
 	// passing back “actor IDs” with responses.  Unlike the debugger server,
 	// we don't have multiple actors, so just use a dummy value of "0" here.
-	this.actorID = "0";
+	this.actorId = "0";
 
 	this.globalMessagemanager = Cc["@mozilla.org/globalmessagemanager;1"]
 		.getService(Ci.nsIMessageBroadcaster);
 	this.messageManager = this.globalMessageManager;
-	logger.info("Dispatcher done");
 }
 
 // Debugger transport callback that dispatches the request.
+// Requests handlers defined in this.requests take presedence
+// over those defined in this.driver.requestTypes.
 Dispatcher.prototype.onPacket = function(packet) {
-	logger.info("Dispatcher.onPacket");
-	this.commandId = this.beginNewCommand();
-	this.commandProcessor.execute(packet, this.send);
+	logger.info(this.id + " -> " + packet.toSource());
 
-	/*
-	logger.info("Dispatcher.onPacket: " + packet);
-
-	if (this.requestTypes && this.requestTypes[packet.name]) {
-		try {
-			this.requestTypes[packet.name].bind(this)(packet);
-		} catch (e) {
-			this.conn.send({error: ("error occurred while processing '" +
-				packet.name),
-				message: e.message});
-		}
+	if (this.commands && this.commands[packet.name]) {
+		this.commands[packet.name].bind(this)(packet);
 	} else {
-		logger.info("onPacket: error");
-		this.conn.send({error: "unrecognizedPacketType",
-			message: ('Marionette does not ' +
-				'recognize the packet type "' +
-				packet.name + '"')});
-	}
+		this.beginNewCommand();
+		this.commandProcessor.execute(packet, this.send.bind(this), this.commandId);
+
+
+
+		/*
+		Task.spawn(function*() {
+			logger.info("NEW TASK SPAWNED");
+			// TODO(ato): Possibly we need yield here?
+			//yield this.commandProcessor.execute(packet, this.send.bind(this), this.commandId);
+			
+			
+			let firstPromise = new Promise(function(resolve) {
+				logger.info("first promise start");
+				
+				/*
+				let secondPromise = new Promise(function(resolve2) {
+					logger.info("second promise start");
+					resolve2("foobar");
+					logger.info("second promise end");
+				});
+				let rv = yield secondPromise;
+				*
 	
-	logger.info("Dispatcher.onPacket done");
-	*/
+				let rv = "foobar";
+				resolve(rv);
+				logger.info("first promise end");
+			});
+			let result = yield firstPromise;
+			logger.info("yielded result from promise: " + result);
+
+			logger.info("AFTER COMMANDPROCESSOR.EXECUTE!");
+			return result;
+		}.bind(this)).then(function(result) {
+			logger.info("result: " + result);
+		}, function(err) {
+			logger.info("error: " + error);
+		});
+		*/
+	}
 };
 
 // Debugger transport callback that cleans up after a connection is closed.
 Dispatcher.prototype.onClosed = function(status) {
-	logger.info("Dispatcher.onClosed");
 	this.server.onConnectionClosed(this);
 	this.driver.sessionTearDown();
-	logger.info("Dispatcher.onClosed done");
 };
 
-Dispatcher.prototype.closeListener = function() {
-	logger.info("Dispatcher.closeListener");
-	this.listener.close();
-	this.listener = null;
-	logger.info("Dispatcher.closeListener done");
-};
-
-/*
-// Debugger transport callbacks.
-// This is called when we receive data on the socket from the client.
-// Data format is Marionette protocol.
-Dispatcher.prototype.onPacket = function(packet) {
-	logger.info("Dispatcher.onPacket");
-	this.commandId = this.beginNewCommand();
-	this.commandProcessor.execute(packet, this.send);
-};
-*/
-
-// Triggered on a message from the listener (content process).
-// This data comes as a stringified JSON object.
-Dispatcher.prototype.receiveMessage = function(msg) {
-	logger.info("Dispatcher.receiveMessage: " + msg);
-	switch (msg.name) {
-	case "Marionette:done":
-		this.send(msg);
-		break;
-	}
-	logger.info("Dispatcher.receiveMessage done");
-};
+// Convenience methods:
 
 Dispatcher.prototype.sayHello = function() {
-  logger.info("Dispatcher.sayHello");
-  this.conn.send({from: "root",
-                  applicationType: "gecko",
-                  traits: []});
-  logger.info("Dispatcher.sayHello done");
+	this.beginNewCommand();
+	this.sendResponse({from: "root", applicationType: "gecko", traits: []}, this.commandId);
 };
 
 Dispatcher.prototype.getMarionetteID = function() {
-  logger.info("Dispatcher.getMarionetteID");
-  this.conn.send({"from": "root", "id": this.actorId});
-  logger.info("Dispatcher.getMarionetteID done");
+	this.beginNewCommand();
+	this.sendResponse({from: "root", id: this.actorId}, this.commandId);
 };
 
-// Callback from commands as well as messages from listener.
-// This message is marshaled and send back to the client.
-Dispatcher.prototype.send = function(msg) {
-	logger.info("Dispatcher.send: " + msg);
-	let packet = {from: this.actorId, value: msg};
+Dispatcher.prototype.sendOk = function(commandId) {
+	this.sendResponse({from: this.actorId, ok: true}, commandId);
+};
 
-	// The Marionette protocol mandates that we send errors
-	// using a separate key.  For compatibility with WebDriver
-	// we replicate it by also sending value.
-	if (msg.status > 0)
-		packet.error = msg.value;  // TODO(ato): Or just msg?
+// Responses from commands as well as messages from listener.
+// The message is marshaled and send back to the client.
+Dispatcher.prototype.send = function(msg, commandId) {
+	// TODO(ato): Should status be on packet, or on value?
+	let packet = {from: this.actorId, value: msg.value, status: msg.status};
+
+	// The Marionette protocol sends errors using the "error"
+	// key instead of, as Selenium, "value".
+	if (!error.isSuccess(msg.status)) {
+		packet.error = packet.value;
+		delete packet.value;
+	}
 
 	// Responses without a value should have the "ok"
 	// field set to a positive value.
-	if (msg.status === 0 && msg.value === null)
+	if (error.isSuccess(msg.status) && packet.value === undefined) {
 		packet.ok = true;
+		delete packet.value;
+	}
 
-	this.sendResponse(packet, this.commandId);
-	logger.info("Dispatcher.send done");
+	this.sendResponse(packet, commandId);
 };
- 
-// Send a packet to client.  commandId is a unique identifier assigned
-// to the client's request that is used to distinguish the asynchronous
-// responses.
-Dispatcher.prototype.sendResponse = function(packet, commandId) {	
-	logger.info("Dispatcher.sendResponse");
-	let payload = JSON.stringify(packet);
+
+// Low-level methods:
+
+// Marshals and sends message to client over the debugger transport socket.
+//
+// commandId is a unique identifier assigned to the client's request
+// that is used to distinguish the asynchronous responses.
+Dispatcher.prototype.sendResponse = function(msg, commandId) {
+	//let payload = JSON.stringify(msg);
+	let payload = msg;
 	if (this.isEmulatorCallback(commandId)) {
 		this.sendEmulatorCallback(payload);
 	} else {
 		this.sendToClient(payload, commandId);
 	}
-	logger.info("Dispatcher.sendResponse done");
 };
 
-Dispatcher.prototype.sendOk = function(commandId) {
-	logger.info("Dispatcher.sendOk");
-	this.sendToClient({from: this.actorId, ok: true}, commandId);
-	logger.info("Dispatcher.sendOk done");
-};
-
+// Sends payload as-is as an emulator callback over the debugger transport socket.
+// Notably this skips out-of-sync command checks.
 Dispatcher.prototype.sendEmulatorCallback = function(payload) {
-	logger.info("Dispatcher.sendEmulatorCallback");
-	this.conn.send(payload);
-	logger.info("Dispatcher.sendEmulatorCallback done");
+	this.sendRaw("emulator", payload);
 };
 
+// Sends given payload as-is to the connected client
+// over the debugger transport socket.
 Dispatcher.prototype.sendToClient = function(payload, commandId) {
 	if (!commandId) {
 		logger.warn("Got response with no command ID");
@@ -177,7 +174,7 @@ Dispatcher.prototype.sendToClient = function(payload, commandId) {
 	// A null value for this.commandId means we've already processed
 	// a message for the previous state, and so the current message is
 	// a duplicate.
-	if (!this.commandId) {
+	if (this.commandId === null) {
 		logger.warn("Ignoring duplicate response for command ID: " + commandId);
 		return;
 	}
@@ -189,16 +186,19 @@ Dispatcher.prototype.sendToClient = function(payload, commandId) {
 		return;
 	}
 
-	logger.debug("<- " + payload);
-	this.conn.send(payload);
+	this.sendRaw("client", payload);
 	this.commandId = null;
 };
 
+// Sends payload as-is over debugger transport socket to client, and logs it.
+Dispatcher.prototype.sendRaw = function(dest, payload) {
+	logger.debug(this.id + " " + dest + " <- " + payload.toSource());
+	this.conn.send(payload);
+};
+
 Dispatcher.prototype.beginNewCommand = function() {
-	logger.info("Dispatcher.beginNewCommand");
 	let uuid = uuidGen.generateUUID().toString();
-	logger.info("uuid: " + uuid);
-	logger.info("Dispatcher.beginNewCommand done");
+	this.commandId = uuid;
 	return uuid;
 };
 
@@ -208,4 +208,12 @@ Dispatcher.prototype.isEmulatorCallback = function(commandId) {
 
 Dispatcher.prototype.isOutOfSync = function(commandId) {
 	return this.commandId != commandId;
+};
+
+Dispatcher.prototype.toString = function() {
+	return "Response " + this.data;
+};
+
+Dispatcher.prototype.commands = {
+	getMarionetteID: Dispatcher.prototype.getMarionetteID
 };

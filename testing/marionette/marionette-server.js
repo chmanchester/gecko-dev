@@ -15,10 +15,9 @@ Cu.import("resource://gre/modules/Log.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
-Cu.import("chrome://marionette/content/atoms.js");
 Cu.import("chrome://marionette/content/chrome.js");
 Cu.import("chrome://marionette/content/dispatcher.js");
-Cu.import("chrome://marionette/content/marionette-common.js");
+//Cu.import("chrome://marionette/content/marionette-common.js");
 Cu.import("chrome://marionette/content/marionette-elements.js");
 Cu.import("chrome://marionette/content/marionette-simpletest.js");
 
@@ -47,7 +46,6 @@ function MarionetteServer(port, forceLocal) {
   this.forceLocal = forceLocal;
   this.conns = {};
   this.nextConnId = 0;
-  this.driver = null;
   this.alive = false;
 }
 
@@ -59,14 +57,13 @@ MarionetteServer.prototype.init = function() {
     "chrome://specialpowers/content/SpecialPowersObserver.js", specialpowers);
   specialpowers.specialPowersObserver = new specialpowers.SpecialPowersObserver();
   specialpowers.specialPowersObserver.init();
-  
-  Services.prefs.setBoolPref(CONTENT_LISTENER_PREF, false);
+};
+
+MarionetteServer.prototype.chromeFactory = function() {
   let appName = Services.appinfo.name;
-  
-  let bypassOffline = false;
   let qemu = "0";
   let device = null;
-  
+  let bypassOffline = false;
   try {
     XPCOMUtils.defineLazyGetter(this, "libcutils", function() {
       Cu.import("resource://gre/modules/systemlibs.js");
@@ -77,10 +74,12 @@ MarionetteServer.prototype.init = function() {
       logger.debug("B2G emulator: " + (qemu == "1" ? "yes" : "no"));
       device = libcutils.property_get("ro.product.device");
       logger.debug("Device detected is " + device);
-      bypassOffline = (qemu == "1" || device == "panda");
+      bypassOffline = (this.qemu == "1" || this.device == "panda");
     }
   } catch (e) {}
-  
+
+  Services.prefs.setBoolPref(CONTENT_LISTENER_PREF, false);
+
   if (bypassOffline) {
     logger.info("Bypassing offline status");
     Services.prefs.setBoolPref("network.gonk.manage-offline-status", false);
@@ -89,7 +88,7 @@ MarionetteServer.prototype.init = function() {
   }
 
   // TODO(ato): Fix this ternary:
-  this.driver = new MarionetteChrome(appName, qemu == "1" ? "qemu" : (!device ? "desktop" : device));
+  return new MarionetteChrome(appName, qemu == "1" ? "qemu" : (!device ? "desktop" : device));
 };
 
 MarionetteServer.prototype.start = function() {
@@ -112,19 +111,17 @@ MarionetteServer.prototype.stop = function() {
 };
 
 MarionetteServer.prototype.onSocketAccepted = function(serverSocket, clientSocket) {
-  logger.info("Accepted connection from " + clientSocket.host + ":" + clientSocket.port);
-
   let input = clientSocket.openInputStream(0, 0, 0);
   let output = clientSocket.openOutputStream(0, 0, 0);
   let transport = new DebuggerTransport(input, output);
-  let connId = "conn" + this.nextConnId++ + ".";
-  let conn = new Dispatcher(connId, transport, this);
-  this.conns[connId] = conn;
+  let connId = "conn" + this.nextConnId++;
+  let dispatcher = new Dispatcher(connId, transport, this, this.chromeFactory);
+  this.conns[connId] = dispatcher;
 
-  // Create a root actor for the connection and send the hello packet.
-  logger.info("server: asking dispatcher to say hello");
-  conn.sayHello();
-  logger.info("sayHello returned to MarionetteServer.onSocketAccepted");
+  logger.info("Accepted connection " + connId + " from " + clientSocket.host + ":" + clientSocket.port);
+
+  // Create a root actor for the connection and send the hello packet
+  dispatcher.sayHello();
   transport.ready();
   logger.info("MarionetteServer.onSocketAccepted done");
 };
@@ -136,6 +133,8 @@ MarionetteServer.prototype.closeListener = function() {
 
 MarionetteServer.prototype.onConnectionClosed = function(conn) {
   logger.info("MarionetteServer.onConnectionClosed");
-  delete this.conns[conn.id];
+  let id = conn.id;
+  delete this.conns[id];
+  logger.info("Closed connection " + id);
   logger.info("MarionetteServer.onConnectionClosed done");
 };

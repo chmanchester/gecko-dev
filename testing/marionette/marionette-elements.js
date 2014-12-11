@@ -309,7 +309,7 @@ ElementManager.prototype = {
       return;
     } else {
       if (!searchTimeout || new Date().getTime() - startTime > searchTimeout) {
-        on_error("Unable to locate element: " + values.value, 7, null, command_id);
+        on_error({message: "Unable to locate element: " + values.value, code: 7}, command_id);
       } else {
         values.time = startTime;
         this.timer.initWithCallback(this.find.bind(this, win, values,
