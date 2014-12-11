@@ -896,7 +896,7 @@ MarionetteChrome.prototype = {
         if (that.inactivityTimer != null) {
          that.inactivityTimer.initWithCallback(function() {
            throw new ScriptTimeoutError("timed out due to inactivity");
-         }, inactivityTimeout, Ci.nsITimer.TYPE_ONESHOT);
+         }, inactivityTimeout, Ci.nsITimer.TYPE_ONE_SHOT);
         }
       };
       setTimer();
@@ -949,12 +949,11 @@ MarionetteChrome.prototype = {
    *        'ms' member is time in milliseconds to set timeout
    */
   setScriptTimeout: function(cmd, resp) {
-    let ms = parseInt(aRequest.parameters.ms);
+    let ms = parseInt(cmd.parameters.ms);
     if (isNaN(ms)) {
       throw new WebDriverError("Not a Number");
     }
     this.scriptTimeout = ms;
-    return resp;
   },
 
   /**
@@ -966,6 +965,7 @@ MarionetteChrome.prototype = {
    *        'timeout' member will be used as the script timeout if it is given
    */
   executeJSScript: function(cmd, resp) {
+    logger.info("Chrome.executeJSScript async=" + cmd.parameters.async);
     let timeout = cmd.parameters.scriptTimeout ? cmd.parameters.scriptTimeout : this.scriptTimeout;
 
     // All pure JS scripts will need to call Marionette.finish() to complete the test.
@@ -977,15 +977,22 @@ MarionetteChrome.prototype = {
 
     switch (this.context) {
     case Context.CHROME:
+      logger.info("executeJSScript in chrome context");
       if (cmd.parameters.async) {
-        this.executeWithCallback(cmd, resp, cmd.parameters.async /* directInject */);
+        logger.info("calling executeWithCallback");
+        yield this.executeWithCallback(cmd, resp, cmd.parameters.async /* directInject */);
       } else {
+        logger.info("calling execute");
         this.execute(cmd, resp, true /* async */);
       }
+      logger.info("after executing in chrome context");
+      logger.info("resp.value=" + resp.value);
       break;
     
     case Context.CONTENT:
-      this.sendAsync("executeJSScript",
+      logger.info("executeJSScript forwarding to content");
+      //this.sendAsync("executeJSScript",
+      resp.value = yield this.listener.executeJSScript(
                      {
                        script: cmd.parameters.script,
                        args: cmd.parameters.args,
@@ -996,10 +1003,10 @@ MarionetteChrome.prototype = {
                        specialPowers: cmd.parameters.specialPowers,
                        filename: cmd.parameters.filename,
                        line: cmd.parameters.line,
-                     },
-                     cmd.id);
+                     });
       break;
     }
+    logger.info("Chrome.executeJSScript done");
   },
 
   /**
@@ -1018,6 +1025,7 @@ MarionetteChrome.prototype = {
    *        function body
    */
   executeWithCallback: function(cmd, resp, directInject) {
+    logger.info("Chrome.executeWithCallback directInject=" + directInject);
     let inactivityTimeout = cmd.parameters.inactivityTimeout;
     let timeout = cmd.parameters.scriptTimeout ? cmd.parameters.scriptTimeout : this.scriptTimeout;
     let script;
@@ -1028,7 +1036,8 @@ MarionetteChrome.prototype = {
     }
 
     if (this.context == Context.CONTENT) {
-      this.sendAsync("executeAsyncScript",
+      logger.info("delegating to content");
+      resp.value = yield this.listener.executeAsyncScript(
                      {
                        script: cmd.parameters.script,
                        args: cmd.parameters.args,
@@ -1039,8 +1048,7 @@ MarionetteChrome.prototype = {
                        specialPowers: cmd.parameters.specialPowers,
                        filename: cmd.parameters.filename,
                        line: cmd.parameters.line
-                     },
-                     cmd.id);
+                     });
       return;
     }
 
@@ -1050,18 +1058,18 @@ MarionetteChrome.prototype = {
      this.inactivityTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
      if (this.inactivityTimer != null) {
       this.inactivityTimer.initWithCallback(function() {
-        let exc = new ScriptTimeoutError("timed out due to inactivity");
-        chromeAsyncReturnFunc(exc);
-      }, inactivityTimeout, Ci.nsITimer.TYPE_ONESHOT);
+        let err = new ScriptTimeoutError("timed out due to inactivity");
+        chromeAsyncReturnFunc(err);
+      }, inactivityTimeout, Ci.nsITimer.TYPE_ONE_SHOT);
      }
      this.heartbeatCallback = function resetInactivityTimer() {
       that.inactivityTimer.cancel();
       that.inactivityTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
       if (that.inactivityTimer != null) {
        that.inactivityTimer.initWithCallback(function() {
-         let exc = new ScriptTimeoutError("timed out due to inactivity");
-         chromeAsyncReturnFunc(exc);
-       }, inactivityTimeout, Ci.nsITimer.TYPE_ONESHOT);
+         let err = new ScriptTimeoutError("timed out due to inactivity");
+         chromeAsyncReturnFunc(err);
+       }, inactivityTimeout, Ci.nsITimer.TYPE_ONE_SHOT);
       }
      };
     }
@@ -1072,17 +1080,22 @@ MarionetteChrome.prototype = {
     let marionette = new Marionette(this, curWindow, "chrome",
                                     this.marionetteLog,
                                     timeout, this.heartbeatCallback, this.testName);
-    marionette.command_id = this.command_id;
+    marionette.command_id = cmd.id;
 
     // If val is of type Error an error is sent to the user,
     // otherwise it's assumed to be the value of a successful response.
     function chromeAsyncReturnFunc(val) {
+      logger.info("chromeAsyncReturnFunc val=" + JSON.stringify(val));
       if (that._emu_cbs && Object.keys(that._emu_cbs).length) {
         val = new WebDriverError("Emulator callback still pending when finish() called");
         that._emu_cbs = null;
       }
 
+      logger.info("cmd.id=" + cmd.id + ", marionette.command_id=" + marionette.command_id);
+
       if (cmd.id == marionette.command_id) {
+        logger.info("command ID matches, proceeding with providing response");
+
         if (that.timer != null) {
           that.timer.cancel();
           that.timer = null;
@@ -1090,21 +1103,22 @@ MarionetteChrome.prototype = {
 
         curWindow.onerror = original_onerror;
 
-        if (typeof val === "function") {
+        if (val instanceof Error) {
           throw val;
         } else {
           resp.value = that.curBrowser.elementManager.wrapValue(val);
-          resp.send();
+          //resp.send();  // TODO(ato): Is this still needed?
         }
       }
       if (that.inactivityTimer != null) {
         that.inactivityTimer.cancel();
       }
+      logger.info("chromeAsyncReturnFunc done");
     }
 
     curWindow.onerror = function(errorMsg, url, lineNumber) {
-      let exc = new JavaScriptError(`${msg} at: ${url} line: ${line}`);
-      chromeAsyncReturnFunc(exc);
+      let err = new JavaScriptError(`${msg} at: ${url} line: ${line}`);
+      chromeAsyncReturnFunc(err);
       return true;
     };
 
@@ -1124,9 +1138,9 @@ MarionetteChrome.prototype = {
       this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
       if (this.timer != null) {
         this.timer.initWithCallback(function() {
-          let exc = new ScriptTimeoutError("timed out");
-          chromeAsyncReturnFunc(exc);
-        }, that.timeout, Ci.nsITimer.TYPE_ONESHOT);
+          let err = new ScriptTimeoutError("timed out");
+          chromeAsyncReturnFunc(err);
+        }, that.timeout, Ci.nsITimer.TYPE_ONE_SHOT);
       }
 
       _chromeSandbox.returnFunc = chromeAsyncReturnFunc;
@@ -1144,13 +1158,14 @@ MarionetteChrome.prototype = {
       this.executeScriptInSandbox(resp, _chromeSandbox, script, directInject,
                                   true /* async */, timeout);
     } catch (e) {
-      let exc = new JavaScriptError(e,
+      let err = new JavaScriptError(e,
                                      "execute_async_script",
                                      cmd.parameters.filename,
                                      cmd.parameters.line,
                                      script);
-      chromeAsyncReturnFunc(exc);
+      chromeAsyncReturnFunc(err);
     }
+    logger.info("Chrome.executeWithCallback done");
   },
 
   /**
@@ -1792,7 +1807,7 @@ MarionetteChrome.prototype = {
       break;
 
     case Context.CONTENT:
-      this.sendAsync("getElementAttribute", {id: id, name: name}, cmd.id);
+      resp.value = yield this.listener.getElementAttribute({id: id, name: name});
       break;
     }
   },
@@ -1818,7 +1833,7 @@ MarionetteChrome.prototype = {
       break;
 
     case Context.CONTENT:
-      this.sendAsync("getElementText", {id: id}, cmd.id);
+      resp.value = yield this.listener.getElementText({id: id});
       break;
     }
   },
@@ -1840,7 +1855,7 @@ MarionetteChrome.prototype = {
       break;
 
     case Context.CONTENT:
-      this.sendAsync("getElementTagName", {id: id}, cmd.id);
+      resp.value = yield this.listener.getElementTagName({id: id});
       break;
     }
   },
@@ -1852,7 +1867,7 @@ MarionetteChrome.prototype = {
    *        'id' member holds the reference id to
    *        the element that will be checked
    */
-  isElementDisplayed: function MDA_isElementDisplayed(cmd, resp) {
+  isElementDisplayed: function(cmd, resp) {
     let id = cmd.parameters.id;
 
     switch (this.context) {
@@ -1862,7 +1877,7 @@ MarionetteChrome.prototype = {
       break;
 
     case Context.CONTENT:
-      this.sendAsync("isElementDisplayed", {id: id}, cmd.id);
+      resp.value = yield this.isElementDisplayed({id: id});
       break;
     }
   },
@@ -1876,9 +1891,8 @@ MarionetteChrome.prototype = {
    *               'propertyName' is the CSS rule that is being requested
    */
   getElementValueOfCssProperty: function(cmd, resp) {
-    this.sendAsync("getElementValueOfCssProperty",
-                   {id: cmd.parameters.id, propertyName: cmd.parameters.propertyName},
-                   cmd.id);
+    resp.value = yield this.listener.getElementValueOfCssProperty(
+                   {id: cmd.parameters.id, propertyName: cmd.parameters.propertyName});
   },
 
   /**
@@ -1894,7 +1908,7 @@ MarionetteChrome.prototype = {
       throw new WebDriverError("Command 'submitElement' is not available in chrome context");
       break;
     case Context.CONTENT:
-      this.sendAsync("submitElement", {id: cmd.parameters.id}, cmd.id);
+      yield this.listener.submitElement({id: cmd.parameters.id});
       break;
     }
   },
@@ -1909,20 +1923,20 @@ MarionetteChrome.prototype = {
   isElementEnabled: function(cmd, resp) {
     let id = cmd.parameters.id;
 
-    switch (this.contex) {
+    switch (this.context) {
     case Context.CHROME:
-        // Selenium atom doesn't quite work here
-        let el = this.curBrowser.elementManager.getKnownElement(
-            aRequest.parameters.id, this.getCurrentWindow());
-        if (el.disabled != undefined) {
-          this.sendResponse(!!!el.disabled, command_id);
-          resp.value = !!!el.disabled;
-        } else {
-          resp.value = true;
-        }
-        break;
+      // Selenium atom doesn't quite work here
+      let win = this.getCurrentWindow();
+      let el = this.curBrowser.elementManager.getKnownElement(id, win);
+      if (el.disabled != undefined) {
+        resp.value = !!!el.disabled;
+      } else {
+        resp.value = true;
+      }
+      break;
+
     case Context.CONTENT:
-      this.sendAsync("isElementEnabled", { id: id}, cmd.id);
+      resp.value = yield this.listener.isElementEnabled({id: id});
       break;
     }
   },
@@ -1993,23 +2007,21 @@ MarionetteChrome.prototype = {
    *        the element that will be checked
    *        'value' member holds the value to send to the element
    */
-  sendKeysToElement: function MDA_sendKeysToElement(aRequest) {
-    let command_id = this.command_id = this.getCommandId();
-    if (this.context == "chrome") {
-      let currentWindow = this.getCurrentWindow();
-      let el = this.curBrowser.elementManager.getKnownElement(
-        aRequest.parameters.id, currentWindow);
-      utils.sendKeysToElement(currentWindow, el, aRequest.parameters.value,
-                              this.sendOk.bind(this), this.sendError.bind(this),
+  sendKeysToElement: function(cmd, resp) {
+    let id = cmd.parameters.id;
+    let val = cmd.parameters.value;
+
+    switch (this.context) {
+    case Context.CHROME:
+      let curWin = this.getCurrentWindow();
+      let el = this.curBrowser.elementManager.getKnownElement(id, curWin);
+      utils.sendKeysToElement(curWin, el, val, () => {}, (e) => { throw e },
                               command_id, this.context);
-    }
-    else {
-      this.sendAsync("sendKeysToElement",
-                     {
-                       id:aRequest.parameters.id,
-                       value: aRequest.parameters.value
-                     },
-                     command_id);
+      break;
+
+    case Context.CONTENT:
+      yield this.listener.sendKeysToElement({id: cmd.parameters.id, value: cmd.parameters.value});
+      break;
     }
   },
 
@@ -2030,29 +2042,24 @@ MarionetteChrome.prototype = {
    *        'id' member holds the reference id to
    *        the element that will be cleared
    */
-  clearElement: function MDA_clearElement(aRequest) {
-    let command_id = this.command_id = this.getCommandId();
-    if (this.context == "chrome") {
-      //the selenium atom doesn't work here
-      try {
-        let el = this.curBrowser.elementManager.getKnownElement(
-            aRequest.parameters.id, this.getCurrentWindow());
-        if (el.nodeName == "textbox") {
-          el.value = "";
-        }
-        else if (el.nodeName == "checkbox") {
-          el.checked = false;
-        }
-        this.sendOk(command_id);
+  clearElement: function(cmd, resp) {
+    let id = cmd.parameters.id;
+
+    switch (this.context) {
+    case Context.CHROME:
+    // The selenium atom doesn't work here
+      let curWin = this.getCurrentWindow();
+      let el = this.curBrowser.elementManager.getKnownElement(id, curWin);
+      if (el.nodeName == "textbox") {
+        el.value = "";
+      } else if (el.nodeName == "checkbox") {
+        el.checked = false;
       }
-      catch (e) {
-        this.sendError(e.message, e.code, e.stack, command_id);
-      }
-    }
-    else {
-      this.sendAsync("clearElement",
-                     { id:aRequest.parameters.id },
-                     command_id);
+      break;
+
+    case Context.CONTENT:
+      yield this.listener.clearElement({id: id});
+      break;
     }
   },
 
@@ -2065,20 +2072,15 @@ MarionetteChrome.prototype = {
    *
    * @return a point containing x and y coordinates as properties
    */
-  getElementLocation: function MDA_getElementLocation(aRequest) {
-    this.command_id = this.getCommandId();
-    this.sendAsync("getElementLocation", {id: aRequest.parameters.id},
-                   this.command_id);
+  getElementLocation: function(cmd, resp) {
+    resp.value = yield this.listener.getElementLocation({id: cmd.parameters.id});
   },
 
   /**
    * Add a cookie to the document.
    */
-  addCookie: function MDA_addCookie(aRequest) {
-    this.command_id = this.getCommandId();
-    this.sendAsync("addCookie",
-                   { cookie:aRequest.parameters.cookie },
-                   this.command_id);
+  addCookie: function(cmd, resp) {
+    resp.value = yield this.listener.addCookie({cookie: cmd.parameters.cookie});
   },
 
   /**
@@ -2087,27 +2089,22 @@ MarionetteChrome.prototype = {
    * This is the equivalent of calling "document.cookie" and parsing
    * the result.
    */
-  getCookies: function MDA_getCookies() {
-    this.command_id = this.getCommandId();
-    this.sendAsync("getCookies", {}, this.command_id);
+  getCookies: function(cmd, resp) {
+    resp.value = yield this.listener.getCookies();
   },
 
   /**
    * Delete all cookies that are visible to a document
    */
-  deleteAllCookies: function MDA_deleteAllCookies() {
-    this.command_id = this.getCommandId();
-    this.sendAsync("deleteAllCookies", {}, this.command_id);
+  deleteAllCookies: function(cmd, resp) {
+    yield this.listener.deleteAllCookies();
   },
 
   /**
    * Delete a cookie by name
    */
-  deleteCookie: function MDA_deleteCookie(aRequest) {
-    this.command_id = this.getCommandId();
-    this.sendAsync("deleteCookie",
-                   { name:aRequest.parameters.name },
-                   this.command_id);
+  deleteCookie: function(cmd, resp) {
+    yield this.listener.deleteCookie({name: cmd.parameters.name});
   },
 
   /**
@@ -2205,9 +2202,8 @@ MarionetteChrome.prototype = {
   /**
    * Returns the current status of the Application Cache
    */
-  getAppCacheStatus: function MDA_getAppCacheStatus(aRequest) {
-    this.command_id = this.getCommandId();
-    this.sendAsync("getAppCacheStatus", {}, this.command_id);
+  getAppCacheStatus: function(cmd, resp) {
+    resp.value = yield this.listener.getAppCacheStatus();
   },
 
   _emu_cb_id: 0,
@@ -2337,9 +2333,9 @@ MarionetteChrome.prototype = {
    * @param {string} [highlights] List of web elements to highlight.
    * @return {string} PNG image encoded as base 64 string.
    */
-  takeScreenshot: function MDA_takeScreenshot(aRequest) {
-    this.command_id = this.getCommandId();
-    if (this.context == "chrome") {
+  takeScreenshot: function(cmd, resp) {
+    switch (this.context) {
+    case Context.CHROME:
       var win = this.getCurrentWindow();
       var canvas = win.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
       var doc;
@@ -2376,13 +2372,14 @@ MarionetteChrome.prototype = {
       context.drawWindow(win, 0, 0, width, height, "rgb(255,255,255)", flags);
       var dataUrl = canvas.toDataURL("image/png", "");
       var data = dataUrl.substring(dataUrl.indexOf(",") + 1);
-      this.sendResponse(data, this.command_id);
-    }
-    else {
-      this.sendAsync("takeScreenshot",
-                   {id: aRequest.parameters.id,
-                    highlights: aRequest.parameters.highlights},
-                   this.command_id);
+      resp.value = data;
+      break;
+
+    case Context.CONTENT:
+      resp.value = yield this.listener.takeScreenshot(
+                   {id: cmd.parameters.id,
+                    highlights: cmd.parameters.highlights});
+      break;
     }
   },
 
@@ -2393,11 +2390,8 @@ MarionetteChrome.prototype = {
    * portrait-primary, landscape-primary, portrait-secondary, or
    * landscape-secondary.
    */
-  getScreenOrientation: function MDA_getScreenOrientation(aRequest) {
-    this.command_id = this.getCommandId();
-    let curWindow = this.getCurrentWindow();
-    let or = curWindow.screen.mozOrientation;
-    this.sendResponse(or, this.command_id);
+  getScreenOrientation: function(cmd, resp) {
+    resp.value = this.getCurrentWindow().screen.mozOrientation;
   },
 
   /**
@@ -2411,27 +2405,22 @@ MarionetteChrome.prototype = {
    * back to "portrait-primary" and "landscape-primary" respectively,
    * and "portrait-secondary" as well as "landscape-secondary".
    */
-  setScreenOrientation: function MDA_setScreenOrientation(aRequest) {
+  setScreenOrientation: function(cmd, resp) {
     const ors = ["portrait", "landscape",
                  "portrait-primary", "landscape-primary",
                  "portrait-secondary", "landscape-secondary"];
 
-    this.command_id = this.getCommandId();
-    let or = String(aRequest.parameters.orientation);
+    let or = String(cmd.parameters.orientation);
 
     let mozOr = or.toLowerCase();
     if (ors.indexOf(mozOr) < 0) {
-      this.sendError("Unknown screen orientation: " + or, 500, null,
-                     this.command_id);
-      return;
+      throw new WebDriverError(`Unknown screen orientation: ${or}`);
     }
 
     let curWindow = this.getCurrentWindow();
     if (!curWindow.screen.mozLockOrientation(mozOr)) {
-      this.sendError("Unable to set screen orientation: " + or, 500,
-                     null, this.command_id);
+      throw new WebDriverError(`Unable to set screen orientation: ${or}`);
     }
-    this.sendOk(this.command_id);
   },
 
   /**
@@ -2566,6 +2555,45 @@ MarionetteChrome.prototype = {
           this.currentFrameElement = message.json.frameValue;
         }
         break;
+      case "Marionette:getVisibleCookies":
+        let [currentPath, host] = message.json.value;
+        let isForCurrentPath = function(aPath) {
+          return currentPath.indexOf(aPath) != -1;
+        }
+        let results = [];
+        let enumerator = cookieManager.enumerator;
+        while (enumerator.hasMoreElements()) {
+          let cookie = enumerator.getNext().QueryInterface(Ci['nsICookie']);
+          // Take the hostname and progressively shorten
+          let hostname = host;
+          do {
+            if ((cookie.host == '.' + hostname || cookie.host == hostname)
+                && isForCurrentPath(cookie.path)) {
+              results.push({
+                'name': cookie.name,
+                'value': cookie.value,
+                'path': cookie.path,
+                'host': cookie.host,
+                'secure': cookie.isSecure,
+                'expiry': cookie.expires
+              });
+              break;
+            }
+            hostname = hostname.replace(/^.*?\./, '');
+          } while (hostname.indexOf('.') != -1);
+        }
+        return results;
+      case "Marionette:addCookie":
+        let cookieToAdd = message.json.value;
+        Services.cookies.add(cookieToAdd.domain, cookieToAdd.path, cookieToAdd.name,
+                             cookieToAdd.value, cookieToAdd.secure, false, false,
+                             cookieToAdd.expiry);
+        return true;
+      case "Marionette:deleteCookie":
+        let cookieToDelete = message.json.value;
+        cookieManager.remove(cookieToDelete.host, cookieToDelete.name,
+                             cookieToDelete.path, false);
+        return true;
       case "Marionette:emitTouchEvent":
         let globalMessageManager = Cc["@mozilla.org/globalmessagemanager;1"]
                              .getService(Ci.nsIMessageBroadcaster);

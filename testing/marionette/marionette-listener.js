@@ -602,7 +602,6 @@ function executeScript(msg, directInject) {
         stream.close();
         script = data + script;
       }
-      logger.info("sandbox=" + sandbox);
       let res = Cu.evalInSandbox(script, sandbox, "1.8", "dummy file", 0);
       sendSyncMessage("Marionette:shareData",
                       {log: elementManager.wrapValue(marionetteLogObj.getLogs())});
@@ -1762,12 +1761,9 @@ function isElementSelected(id) {
  * Send keys to element
  */
 function sendKeysToElement(msg) {
-  let command_id = msg.json.command_id;
-
   let el = elementManager.getKnownElement(msg.json.id, curFrame);
   let keysToSend = msg.json.value;
-
-  utils.sendKeysToElement(curFrame, el, keysToSend, sendOk, sendError, command_id);
+  utils.sendKeysToElement(curFrame, el, keysToSend, sendOk, sendError, msg.json.command_id);
 }
 
 /**

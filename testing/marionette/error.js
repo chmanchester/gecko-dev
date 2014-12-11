@@ -118,6 +118,14 @@ function UnknownCommandError(msg) {
 }
 UnknownCommandError.prototype = WebDriverError.prototype;
 
+function ElementNotVisibleError(msg) {
+	WebDriverError.call(this, msg);
+	this.name = "ElementNotVisibleError";
+	this.status = "element not visible";
+	this.code = 11;
+}
+ElementNotVisibleError.prototype = WebDriverError.prototype;
+
 function InvalidElementState(msg) {
 	WebDriverError.call(this, msg);
 	this.name = "InvalidElementState";
