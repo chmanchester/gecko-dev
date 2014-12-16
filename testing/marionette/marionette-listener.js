@@ -497,8 +497,7 @@ function createExecuteContentSandbox(aWindow, timeout) {
           sendError({message: "Emulator callback still pending when finish() called"}, commandId);
         }
         else {
-          sendResponse({value: elementManager.wrapValue(value), status: 0},
-                        commandId);
+          sendResponse(msg, commandId);
         }
       }
       else {
@@ -513,13 +512,21 @@ function createExecuteContentSandbox(aWindow, timeout) {
   };
   sandbox.finish = function sandbox_finish() {
     if (asyncTestRunning) {
-      sandbox.asyncComplete(marionette.generate_results(), sandbox.asyncTestCommandId);
+      let msg = {
+        value: marionette.generate_results(),
+        code: 0
+      };
+      sandbox.asyncComplete(msg, sandbox.asyncTestCommandId);
     } else {
       return marionette.generate_results();
     }
   };
   sandbox.marionetteScriptFinished = function sandbox_marionetteScriptFinished(value) {
-    return sandbox.asyncComplete(value, sandbox.asyncTestCommandId);
+    let msg = {
+      value: elementManager.wrapValue(value),
+      code: 0
+    };
+    return sandbox.asyncComplete(msg, sandbox.asyncTestCommandId);
   };
 
   return sandbox;
@@ -847,11 +854,11 @@ function executeWithCallback(msg, useFinish) {
     Cu.evalInSandbox(scriptSrc, sandbox, "1.8", "dummy file", 0);
   } catch (e) {
     // 17 = JavascriptException
-    let err = new JavaScriptException(e,
-                                      "execute_async_script",
-                                      msg.json.filename,
-                                      msg.json.line,
-                                      scriptSrc);
+    let err = new JavaScriptError(e,
+                                  "execute_async_script",
+                                  msg.json.filename,
+                                  msg.json.line,
+                                  scriptSrc);
     sandbox.asyncComplete(err, asyncTestCommandId);
   }
 }

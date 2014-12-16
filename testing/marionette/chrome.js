@@ -1082,90 +1082,90 @@ MarionetteChrome.prototype = {
                                     timeout, this.heartbeatCallback, this.testName);
     marionette.command_id = cmd.id;
 
-    // If val is of type Error an error is sent to the user,
-    // otherwise it's assumed to be the value of a successful response.
-    function chromeAsyncReturnFunc(val) {
-      logger.info("chromeAsyncReturnFunc val=" + JSON.stringify(val));
-      if (that._emu_cbs && Object.keys(that._emu_cbs).length) {
-        val = new WebDriverError("Emulator callback still pending when finish() called");
-        that._emu_cbs = null;
-      }
-
-      logger.info("cmd.id=" + cmd.id + ", marionette.command_id=" + marionette.command_id);
-
-      if (cmd.id == marionette.command_id) {
-        logger.info("command ID matches, proceeding with providing response");
-
-        if (that.timer != null) {
-          that.timer.cancel();
-          that.timer = null;
+    yield new Promise(function(resolve, reject) {
+      // If val is of type Error an error is sent to the user,
+      // otherwise it's assumed to be the value of a successful response.
+      function chromeAsyncReturnFunc(val) {
+        logger.info("chromeAsyncReturnFunc val=" + JSON.stringify(val));
+        if (that._emu_cbs && Object.keys(that._emu_cbs).length) {
+          val = new WebDriverError("Emulator callback still pending when finish() called");
+          that._emu_cbs = null;
         }
 
-        curWindow.onerror = original_onerror;
+        logger.info("cmd.id=" + cmd.id + ", marionette.command_id=" + marionette.command_id);
 
-        if (val instanceof Error) {
-          throw val;
+        if (cmd.id == marionette.command_id) {
+          logger.info("command ID matches, proceeding with providing response");
+
+          if (that.timer != null) {
+            that.timer.cancel();
+            that.timer = null;
+          }
+
+          curWindow.onerror = original_onerror;
+
+          if (val instanceof Error || val instanceof WebDriverError) {
+            reject(val);
+          } else {
+            resp.value = that.curBrowser.elementManager.wrapValue(val);
+            //resp.send();  // TODO(ato): Is this still needed?
+            resolve();
+          }
+        }
+        if (that.inactivityTimer != null) {
+          that.inactivityTimer.cancel();
+        }
+        logger.info("chromeAsyncReturnFunc done");
+      }
+
+      curWindow.onerror = function(errorMsg, url, lineNumber) {
+        let err = new JavaScriptError(`${msg} at: ${url} line: ${line}`);
+        chromeAsyncReturnFunc(err);
+      };
+
+      function chromeAsyncFinish() {
+        chromeAsyncReturnFunc(marionette.generate_results());
+      }
+
+      let _chromeSandbox = this.createExecuteSandbox(curWindow,
+                                                     marionette,
+                                                     cmd.parameters.args,
+                                                     cmd.parameters.specialPowers,
+                                                     cmd.id);
+      if (!_chromeSandbox)
+        return;
+
+      try {
+        this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+        if (this.timer != null) {
+          this.timer.initWithCallback(function() {
+            let err = new ScriptTimeoutError("timed out");
+            chromeAsyncReturnFunc(err);
+          }, that.timeout, Ci.nsITimer.TYPE_ONE_SHOT);
+        }
+
+        _chromeSandbox.returnFunc = chromeAsyncReturnFunc;
+        _chromeSandbox.finish = chromeAsyncFinish;
+
+        if (directInject) {
+          script = cmd.parameters.script;
         } else {
-          resp.value = that.curBrowser.elementManager.wrapValue(val);
-          //resp.send();  // TODO(ato): Is this still needed?
+          script =  '__marionetteParams.push(returnFunc);' +
+            'let marionetteScriptFinished = returnFunc;' +
+            'let __marionetteFunc = function() {' + cmd.parameters.script + '};' +
+            '__marionetteFunc.apply(null, __marionetteParams);';
         }
+        this.executeScriptInSandbox(resp, _chromeSandbox, script, directInject,
+                                    true /* async */, timeout);
+      } catch (e) {
+        let err = new JavaScriptError(e,
+                                      "execute_async_script",
+                                      cmd.parameters.filename,
+                                      cmd.parameters.line,
+                                      script);
+        chromeAsyncReturnFunc(err);
       }
-      if (that.inactivityTimer != null) {
-        that.inactivityTimer.cancel();
-      }
-      logger.info("chromeAsyncReturnFunc done");
-    }
-
-    curWindow.onerror = function(errorMsg, url, lineNumber) {
-      let err = new JavaScriptError(`${msg} at: ${url} line: ${line}`);
-      chromeAsyncReturnFunc(err);
-      return true;
-    };
-
-    function chromeAsyncFinish() {
-      chromeAsyncReturnFunc(marionette.generate_results());
-    }
-
-    let _chromeSandbox = this.createExecuteSandbox(curWindow,
-                                                   marionette,
-                                                   cmd.parameters.args,
-                                                   cmd.parameters.specialPowers,
-                                                   cmd.id);
-    if (!_chromeSandbox)
-      return;
-
-    try {
-      this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-      if (this.timer != null) {
-        this.timer.initWithCallback(function() {
-          let err = new ScriptTimeoutError("timed out");
-          chromeAsyncReturnFunc(err);
-        }, that.timeout, Ci.nsITimer.TYPE_ONE_SHOT);
-      }
-
-      _chromeSandbox.returnFunc = chromeAsyncReturnFunc;
-      _chromeSandbox.finish = chromeAsyncFinish;
-
-      if (directInject) {
-        script = cmd.parameters.script;
-      } else {
-        script =  '__marionetteParams.push(returnFunc);' +
-                'let marionetteScriptFinished = returnFunc;' +
-                'let __marionetteFunc = function() {' + cmd.parameters.script + '};' +
-                '__marionetteFunc.apply(null, __marionetteParams);';
-      }
-
-      this.executeScriptInSandbox(resp, _chromeSandbox, script, directInject,
-                                  true /* async */, timeout);
-    } catch (e) {
-      let err = new JavaScriptError(e,
-                                     "execute_async_script",
-                                     cmd.parameters.filename,
-                                     cmd.parameters.line,
-                                     script);
-      chromeAsyncReturnFunc(err);
-    }
-    logger.info("Chrome.executeWithCallback done");
+    }.bind(this));
   },
 
   /**

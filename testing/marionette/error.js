@@ -108,6 +108,8 @@ function WebDriverError(msg) {
 	this.message = msg;
 	this.code = 500;  // overridden
 };
+
+// XXX Errors from timeouts in the chrome sandbox get this as their line number.
 WebDriverError.prototype = new Error;
 
 function UnknownCommandError(msg) {
