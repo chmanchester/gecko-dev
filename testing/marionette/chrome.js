@@ -1260,7 +1260,7 @@ MarionetteChrome.prototype = {
       break;
 
     case Context.CONTENT:
-      this.sendAsync("getTitle", {}, cmd.id);
+      resp.value = yield this.listener.getTitle();
       break;
     }
   },

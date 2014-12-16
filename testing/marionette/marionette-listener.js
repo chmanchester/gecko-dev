@@ -191,7 +191,7 @@ function startListeners() {
   addMessageListenerId("Marionette:multiAction", multiAction);
   addMessageListenerId("Marionette:get", get);
   addMessageListenerId("Marionette:getCurrentUrl", dispatch(getCurrentUrl));
-  addMessageListenerId("Marionette:getTitle", getTitle);
+  addMessageListenerId("Marionette:getTitle", dispatch(getTitle));
   addMessageListenerId("Marionette:getPageSource", dispatch(getPageSource));
   addMessageListenerId("Marionette:goBack", goBack);
   addMessageListenerId("Marionette:goForward", goForward);
@@ -1510,7 +1510,7 @@ function getCurrentUrl() {
  * Get the current Title of the window
  */
 function getTitle(msg) {
-  sendResponse({value: curFrame.top.document.title}, msg.json.command_id);
+  return curFrame.top.document.title;
 }
 
 /**
