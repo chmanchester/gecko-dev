@@ -83,6 +83,8 @@ class TestImportScript(MarionetteTestCase):
         self.assertEqual("i'm a test function!", self.marionette.execute_async_script("marionetteScriptFinished(testFunc());"))
         self.marionette.clear_imported_scripts()
         self.assertFalse(self.check_file_exists())
+        # The following assertion fails, I think due to a change in the sandbox reuse behavior
+        # in execute_script.
         self.assertRaises(JavascriptException, self.marionette.execute_script, "return testFunc();")
         self.assertRaises(JavascriptException, self.marionette.execute_async_script, "marionetteScriptFinished(testFunc());")
 

@@ -244,7 +244,9 @@ function MarionetteChrome(appName, device) {
   this.curFrame = null; // chrome iframe that currently has focus
   this.mainContentFrameId = null;
   this.importedScripts = FileUtils.getFile('TmpD', ['marionetteChromeScripts']);
-  this.importedScriptHashes = {"chrome" : [], "content": []};
+  this.importedScriptHashes = {};
+  this.importedScriptHashes[Context.CONTENT] = [];
+  this.importedScriptHashes[Context.CHROME] = [];
   this.currentFrameElement = null;
   this.testName = null;
   this.mozBrowserClose = null;
@@ -2231,7 +2233,7 @@ MarionetteChrome.prototype = {
   },
 
   emulatorCmdResult: function emulatorCmdResult(message) {
-    if (this.context != "chrome") {
+    if (this.context == Contex.CONTENT) {
       this.sendAsync("emulatorCmdResult", message, -1);
       return;
     }
@@ -2254,14 +2256,14 @@ MarionetteChrome.prototype = {
     }
   },
 
-  importScript: function MDA_importScript(aRequest) {
-    let command_id = this.command_id = this.getCommandId();
+  importScript: function MDA_importScript(cmd, resp) {
     let converter =
       Components.classes["@mozilla.org/intl/scriptableunicodeconverter"].
           createInstance(Components.interfaces.nsIScriptableUnicodeConverter);
     converter.charset = "UTF-8";
+    let script = cmd.parameters.script;
     let result = {};
-    let data = converter.convertToByteArray(aRequest.parameters.script, result);
+    let data = converter.convertToByteArray(script, result);
     let ch = Components.classes["@mozilla.org/security/hash;1"]
                        .createInstance(Components.interfaces.nsICryptoHash);
     ch.init(ch.MD5);
@@ -2269,11 +2271,11 @@ MarionetteChrome.prototype = {
     let hash = ch.finish(true);
     if (this.importedScriptHashes[this.context].indexOf(hash) > -1) {
         //we have already imported this script
-        this.sendOk(command_id);
         return;
     }
     this.importedScriptHashes[this.context].push(hash);
-    if (this.context == "chrome") {
+    switch (this.context) {
+    case Context.CHROME:
       let file;
       if (this.importedScripts.exists()) {
         file = FileUtils.openFileOutputStream(this.importedScripts,
@@ -2287,32 +2289,31 @@ MarionetteChrome.prototype = {
             FileUtils.MODE_WRONLY | FileUtils.MODE_CREATE);
         this.importedScripts.permissions = parseInt("0666", 8); //actually set permissions
       }
-      file.write(aRequest.parameters.script, aRequest.parameters.script.length);
+      file.write(script, script.length);
       file.close();
-      this.sendOk(command_id);
-    }
-    else {
-      this.sendAsync("importScript",
-                     { script: aRequest.parameters.script },
-                     command_id);
+      return;
+    case Context.CONTENT:
+      resp.value = yield this.listener.importScript({id: cmd.parameters.id,
+                                                     script: cmd.parameters.script
+                                                    });
+      return;
     }
   },
 
-  clearImportedScripts: function MDA_clearImportedScripts(aRequest) {
-    let command_id = this.command_id = this.getCommandId();
+  clearImportedScripts: function MDA_clearImportedScripts(cmd, resp) {
     try {
-      if (this.context == "chrome") {
+      switch (this.context) {
+      case Context.CHROME:
         this.deleteFile('marionetteChromeScripts');
-      }
-      else {
+        return;
+      case Context.CONTENT:
         this.deleteFile('marionetteContentScripts');
+        return;
       }
     }
     catch (e) {
-      this.sendError("Could not clear imported scripts", 500, e.name + ": " + e.message, command_id);
-      return;
+      throw new WebDriverError("Could not clear imported scripts");
     }
-    this.sendOk(command_id);
   },
 
   /**

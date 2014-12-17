@@ -217,7 +217,7 @@ function startListeners() {
   addMessageListenerId("Marionette:deleteSession", deleteSession);
   addMessageListenerId("Marionette:sleepSession", sleepSession);
   addMessageListenerId("Marionette:emulatorCmdResult", emulatorCmdResult);
-  addMessageListenerId("Marionette:importScript", importScript);
+  addMessageListenerId("Marionette:importScript", dispatch(importScript));
   addMessageListenerId("Marionette:getAppCacheStatus", getAppCacheStatus);
   addMessageListenerId("Marionette:setTestName", dispatch(setTestName));
   addMessageListenerId("Marionette:takeScreenshot", takeScreenshot);
@@ -2112,7 +2112,6 @@ function emulatorCmdResult(msg) {
 }
 
 function importScript(msg) {
-  let command_id = msg.json.command_id;
   let file;
   if (importedScripts.exists()) {
     file = FileUtils.openFileOutputStream(importedScripts,
@@ -2126,9 +2125,8 @@ function importScript(msg) {
                                           FileUtils.MODE_WRONLY | FileUtils.MODE_CREATE);
     importedScripts.permissions = parseInt("0666", 8); //actually set permissions
   }
-  file.write(msg.json.script, msg.json.script.length);
+  file.write(msg.script, msg.script.length);
   file.close();
-  sendOk(command_id);
 }
 
 /**
