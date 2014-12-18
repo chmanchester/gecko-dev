@@ -1379,19 +1379,19 @@ MarionetteChrome.prototype = {
   setWindowPosition: function(cmd, resp) {
     if (this.appName !== "Firefox") {
       // TODO(ato): Which error code is 61?
-      this.sendError("Unable to set the window position on mobile", 61, null,
-                      command_id);
+      // this.sendError("Unable to set the window position on mobile", 61, null,
+      //                 command_id);
+      throw new WebDriverError("Unable to set the window position on mobile");
     }
     else {
-      let x = parseInt(aRequest.parameters.x);
-      let y  = parseInt(aRequest.parameters.y);
+      let x = parseInt(cmd.parameters.x);
+      let y  = parseInt(cmd.parameters.y);
 
       if (isNaN(x) || isNaN(y)) {
         throw new UnknownError("x and y arguments should be integers");
       }
       let curWindow = this.getCurrentWindow();
       curWindow.moveTo(x, y);
-      return resp;
     }
   },
 
