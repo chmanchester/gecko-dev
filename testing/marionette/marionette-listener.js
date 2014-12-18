@@ -1556,10 +1556,10 @@ function refresh(msg) {
 function findElementContent(msg) {
   let command_id = msg.json.command_id;
   try {
-    let on_success = function(id, cmd_id) { sendResponse({value:id}, cmd_id); };
-    let on_error = sendError;
+    let resolve = id => { sendResponse({value:id}, command_id); };
+    let reject = e => { sendError(e, command_id); };
     elementManager.find(curFrame, msg.json, msg.json.searchTimeout,
-                        on_success, on_error, false, command_id);
+                        false, resolve, reject);
   } catch (e) {
     sendError(e, command_id);
   }

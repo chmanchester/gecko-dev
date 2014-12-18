@@ -1661,17 +1661,15 @@ MarionetteChrome.prototype = {
     case Context.CHROME:
       // TODO(ato): sendResponse and sendError has been removed,
       // needs investigation!!
-      let on_success = this.sendResponse.bind(this);
-      let on_error = this.sendError.bind(this);
-      let id = this.curBrowser.elementManager.find(
-                            this.getCurrentWindow(),
-                            cmd.parameters,
-                            this.searchTimeout,
-                            on_success,
-                            on_error,
-                            false,
-                            cmd.id);
-      break;
+      resp.value = yield new Promise(function (resolve, reject) {
+        this.curBrowser.elementManager.find(this.getCurrentWindow(),
+                                            cmd.parameters,
+                                            this.searchTimeout,
+                                            false,
+                                            resolve,
+                                            reject);
+      });
+      return;
 
     case Context.CONTENT:
       resp.value = yield this.listener.findElementContent({
@@ -1680,7 +1678,7 @@ MarionetteChrome.prototype = {
         element: cmd.parameters.element,
         searchTimeout: this.searchTimeout
       });
-      break;
+      return;
     }
   },
 
@@ -1871,7 +1869,6 @@ MarionetteChrome.prototype = {
    */
   isElementDisplayed: function(cmd, resp) {
     let id = cmd.parameters.id;
-
     switch (this.context) {
     case Context.CHROME:
       let el = this.curBrowser.elementManager.getKnownElement(id, this.getCurrentWindow());
@@ -1879,7 +1876,7 @@ MarionetteChrome.prototype = {
       break;
 
     case Context.CONTENT:
-      resp.value = yield this.isElementDisplayed({id: id});
+      resp.value = yield this.listener.isElementDisplayed({id: id});
       break;
     }
   },

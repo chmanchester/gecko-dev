@@ -27,6 +27,7 @@ const DOCUMENT_POSITION_DISCONNECTED = 1;
 
 let uuidGen = Components.classes["@mozilla.org/uuid-generator;1"]
              .getService(Components.interfaces.nsIUUIDGenerator);
+Components.utils.import("chrome://marionette/content/error.js");
 
 this.CLASS_NAME = "class name";
 this.SELECTOR = "css selector";
@@ -284,7 +285,7 @@ ElementManager.prototype = {
    * @return nsIDOMElement or list of nsIDOMElements
    *        Returns the element(s) by calling the on_success function.
    */
-  find: function EM_find(win, values, searchTimeout, on_success, on_error, all, command_id) {
+  find: function EM_find(win, values, searchTimeout, all, resolve, reject) {
     let startTime = values.time ? values.time : new Date().getTime();
     let startNode = (values.element != undefined) ?
                     this.getKnownElement(values.element, win) : win.document;
@@ -300,22 +301,25 @@ ElementManager.prototype = {
         for (let i = 0 ; i < found.length ; i++) {
           ids.push(this.addToKnownElements(found[i]));
         }
-        on_success(ids, command_id);
+        return ids;
       }
       else {
         let id = this.addToKnownElements(found);
-        on_success({'ELEMENT':id}, command_id);
+        resolve({'ELEMENT':id});
       }
       return;
     } else {
       if (!searchTimeout || new Date().getTime() - startTime > searchTimeout) {
-        on_error({message: "Unable to locate element: " + values.value, code: 7}, command_id);
+        reject({status: "no such element",
+                code: 7,
+                msg: "Unable to locate element: " + values.value});
       } else {
         values.time = startTime;
         this.timer.initWithCallback(this.find.bind(this, win, values,
                                                    searchTimeout,
-                                                   on_success, on_error, all,
-                                                   command_id),
+                                                   all,
+                                                   resolve,
+                                                   reject),
                                     100,
                                     Components.interfaces.nsITimer.TYPE_ONE_SHOT);
       }
